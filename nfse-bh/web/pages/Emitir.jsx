@@ -2,6 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { api, fmtBRL, fmtData, fmtDoc, hoje } from '../lib.js';
 import { Badge, Campo, Modal, Msg } from '../ui.jsx';
 
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const maiuscula = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Prévia das variáveis da descrição (a substituição oficial é feita no servidor, na emissão). */
+function previaDescricao(texto, valor) {
+  const [a, m] = hoje().split('-').map(Number);
+  const n = Number(String(valor).replace(/\./g, '').replace(',', '.'));
+  const vars = {
+    valor: Number.isFinite(n) && n > 0 ? n.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '—',
+    mes: MESES[m - 1], Mes: maiuscula(MESES[m - 1]),
+    mesAnterior: MESES[(m + 10) % 12], MesAnterior: maiuscula(MESES[(m + 10) % 12]),
+    ano: String(a), anoMesAnterior: String(m === 1 ? a - 1 : a),
+    hoje: hoje().split('-').reverse().join('/'),
+  };
+  return texto.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (x, k) => vars[k] ?? x);
+}
+
 export default function Emitir({ status, clientes, clienteInicial, aoEmitir, irPara }) {
   const [clienteId, setClienteId] = useState(clienteInicial ?? '');
   const [descricao, setDescricao] = useState('');
@@ -86,6 +103,7 @@ export default function Emitir({ status, clientes, clienteInicial, aoEmitir, irP
           <textarea rows={5} value={descricao} title="Aceita {{valor}}, {{mes}}, {{MesAnterior}}, {{ano}}" onChange={(e) => setDescricao(e.target.value)} maxLength={1800} required
             placeholder={'Mentoria executiva\nPacote 4 sessões – outubro/2026'} />
         </Campo>
+        {descricao.includes('{{') && <p className="previa-desc">Na nota: <span className="pre">{previaDescricao(descricao, valor)}</span></p>}
         <div className="grade3">
           <Campo label="Valor (R$)">
             <input inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="1.860,00" required />

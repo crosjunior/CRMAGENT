@@ -31,6 +31,15 @@ Cliente + descrição + valor
 | **Extrato** | Importa OFX, CSV ou TXT do banco e dá baixa automática casando valor (bruto ou líquido) com nome/CNPJ do cliente; casos ambíguos ficam para confirmar |
 | **Config** | Importação do histórico (XML/ZIP do portal ou sincronização pelo ADN), dados do emitente, serviço padrão, dados bancários, numeração |
 
+### Primeira carga dos dados
+
+Clientes, notas e agenda ficam em `data/` (fora do git). Para carregá-los numa instalação nova:
+- copie o pacote `.json` e o ZIP/PDFs/XMLs das notas para a pasta **`nfse-bh/importar/`** e rode `npm start`:
+  tudo é importado ao iniciar e os arquivos vão para `importar/processados/`; ou
+- com a aplicação aberta e sem clientes, use o quadro **Carregar meus dados** (selecione todos os arquivos de uma vez).
+
+Dados do emitente já preenchidos na tela prevalecem sobre os do pacote.
+
 ### Importar as notas já emitidas
 
 Em **Config → Importar histórico**:

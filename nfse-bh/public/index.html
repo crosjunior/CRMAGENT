@@ -134,6 +134,18 @@
     .modal-topo { display: flex; justify-content: space-between; align-items: center; }
     .modal-topo h2 { margin: 0 0 8px; }
     a.btn.pri { width: auto; text-align: center; }
+
+    /* --- cabeçalho do emitente --- */
+    .emitente { max-width: 1100px; margin: 0 auto 6px; padding: 0 16px; font-size: 13.5px; }
+    .emitente summary { cursor: pointer; color: var(--sub); padding: 2px 0 8px; list-style-position: inside; }
+    .emitente summary strong { color: var(--txt); }
+    .emitente-grade { display: grid; grid-template-columns: 1fr; gap: 8px 18px; background: var(--card); border: 1px solid var(--borda); border-radius: 12px; padding: 12px 14px; }
+    @media (min-width: 760px) { .emitente-grade { grid-template-columns: repeat(3, 1fr); } }
+    .emitente-grade span { min-width: 0; overflow-wrap: anywhere; }
+    .emitente-grade small { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+    header small .badge { vertical-align: 1px; }
+    .previa-desc { margin: -6px 0 12px; font-size: 13.5px; color: var(--sub); }
+    .previa-desc span { color: var(--txt); }
   </style>
 </head>
 <body>

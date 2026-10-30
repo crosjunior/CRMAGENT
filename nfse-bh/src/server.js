@@ -154,6 +154,42 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     return { ...r, documentos: documentos.length, ultimoNsu };
   }));
 
+  /**
+   * Carga pela pasta importar/: pacotes .json e notas (.zip, .pdf, .xml) deixados lá são importados
+   * e movidos para importar/processados/. Roda ao iniciar e pelo botão da tela.
+   */
+  async function importarPasta(pasta = path.join(config.root, 'importar')) {
+    if (!fs.existsSync(pasta)) return null;
+    const nomes = fs.readdirSync(pasta, { withFileTypes: true }).filter((d) => d.isFile() && /\.(json|zip|pdf|xml)$/i.test(d.name)).map((d) => d.name);
+    if (!nomes.length) return null;
+    const r = { arquivos: nomes, pacotes: [], notas: null, erros: [] };
+    // Pacote primeiro (emitente, clientes, agenda); as notas em PDF/XML completam e anexam os arquivos
+    for (const nome of nomes.filter((n) => /\.json$/i.test(n))) {
+      try {
+        r.pacotes.push(importarPacote({ store, config, pacote: JSON.parse(fs.readFileSync(path.join(pasta, nome), 'utf8').replace(/^\uFEFF/, '')) }));
+      } catch (e) {
+        r.erros.push(`${nome}: ${e.message}`);
+      }
+    }
+    aplicarEmitente(config, store.emitente.obter());
+    const notas = nomes.filter((n) => !/\.json$/i.test(n)).map((nome) => ({ nome, base64: fs.readFileSync(path.join(pasta, nome)).toString('base64') }));
+    if (notas.length) {
+      try {
+        const { lidos, erros } = await lerArquivos(extrairArquivos(notas));
+        await resolverLocais(lidos);
+        r.notas = importar({ lidos, erros }, { pagasAteDias: 45 });
+      } catch (e) {
+        r.erros.push(e.message);
+      }
+    }
+    const destino = path.join(pasta, 'processados');
+    fs.mkdirSync(destino, { recursive: true });
+    const carimbo = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    for (const nome of nomes) fs.renameSync(path.join(pasta, nome), path.join(destino, `${carimbo}_${nome}`));
+    return r;
+  }
+  app.post('/api/importar/pasta', rota(async () => (await importarPasta()) ?? { arquivos: [] }));
+
   function importar(entrada, opcoes) {
     const r = importarDocumentos({ store, config, ...entrada, opcoes });
     // Completa o emitente com o que veio da nota (só os campos ainda vazios)
@@ -264,7 +300,7 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     return { proximo: n };
   }));
 
-  app.locals.ctx = { config, store, emissor };
+  app.locals.ctx = { config, store, emissor, importarPasta };
   return app;
 }
 
@@ -288,6 +324,12 @@ export function iniciarAgendador({ config, store, emissor }, intervaloMs = 15 * 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = carregarConfig();
   const app = criarApp({ config });
+  const carga = await app.locals.ctx.importarPasta().catch((e) => ({ erros: [e.message] }));
+  if (carga) {
+    const p = (carga.pacotes ?? []).reduce((s, x) => ({ c: s.c + x.clientesNovos, n: s.n + x.notasNovas, a: s.a + x.agendas }), { c: 0, n: 0, a: 0 });
+    console.log(`Pasta importar/: ${carga.arquivos?.length ?? 0} arquivo(s) — ${p.c} cliente(s) novo(s), ${p.n + (carga.notas?.notasNovas ?? 0)} nota(s), ${p.a} agendamento(s)`);
+    for (const e of carga.erros ?? []) console.log(`  erro: ${e}`);
+  }
   iniciarAgendador(app.locals.ctx);
   app.listen(config.porta, '127.0.0.1', () => {
     console.log(`NFS-e BH rodando em http://localhost:${config.porta}  (ambiente: ${config.ambiente})`);

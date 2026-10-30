@@ -14,9 +14,10 @@ export function importarPacote({ store, config, pacote }) {
     const atual = store.emitente.obter();
     const novo = { ...atual };
     for (const k of ['prestador', 'servicoPadrao', 'cobranca']) {
-      if (pacote.emitente[k]) novo[k] = { ...(atual[k] ?? {}), ...preenchidos(pacote.emitente[k]) };
+      // O que o usuário já preencheu na tela prevalece; o pacote completa o que está vazio
+      if (pacote.emitente[k]) novo[k] = { ...preenchidos(pacote.emitente[k]), ...preenchidos(atual[k]) };
     }
-    if (pacote.emitente.prestador?.endereco) novo.prestador.endereco = { ...(atual.prestador?.endereco ?? {}), ...preenchidos(pacote.emitente.prestador.endereco) };
+    if (pacote.emitente.prestador?.endereco) novo.prestador.endereco = { ...preenchidos(pacote.emitente.prestador.endereco), ...preenchidos(atual.prestador?.endereco) };
     store.emitente.salvar(novo);
     r.emitente = true;
   }
