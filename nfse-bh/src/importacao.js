@@ -98,6 +98,8 @@ export function lerDocumentoFiscal(xml) {
   };
 }
 
+const LIMITE_ARQUIVO_ZIP = 20 * 1024 * 1024;
+
 /** Abre a lista de arquivos { nome, conteudo (texto) | base64 }: XML e PDF (DANFSe), com ZIP aberto recursivamente. */
 export function extrairArquivos(arquivos) {
   const saida = [];
@@ -107,6 +109,8 @@ export function extrairArquivos(arquivos) {
     if (/\.zip$/i.test(nome)) {
       for (const e of new AdmZip(bytes()).getEntries()) {
         if (e.isDirectory) continue;
+        // Nota fiscal tem poucos KB a poucos MB: entrada maior que isso não é NFS-e (e protege a memória)
+        if (e.header.size > LIMITE_ARQUIVO_ZIP) throw new Error(`${e.entryName}: arquivo grande demais dentro do ZIP`);
         saida.push(...extrairArquivos([{ nome: e.entryName, base64: e.getData().toString('base64') }]));
       }
     } else if (/\.xml$/i.test(nome)) {
