@@ -77,12 +77,13 @@ export default function Emitir({ status, clientes, clienteInicial, aoEmitir, irP
         {cliente && (
           <p className="vazio">
             Código {cliente.cTribNac || sp?.cTribNac} / {cliente.cTribMun || sp?.cTribMun}
+            {cliente.localPrestacao ? ` · prestação em ${cliente.localPrestacao}` : ''}
             {cliente.issRetido ? ` · ISS retido pelo cliente (${cliente.aliquotaIss || sp?.aliquotaIss}%)` : ' · ISS não retido'}
             {cliente.diaVencimento ? ` · vence todo dia ${cliente.diaVencimento}` : ` · prazo ${cliente.prazoDias || status?.cobranca.prazoDias} dias`}
           </p>
         )}
         <Campo label="Descrição do serviço" dica={sp?.descricaoRodape ? `O rodapé padrão é acrescentado: “${sp.descricaoRodape.replace(/\n/g, ' · ')}”` : null}>
-          <textarea rows={5} value={descricao} onChange={(e) => setDescricao(e.target.value)} maxLength={1800} required
+          <textarea rows={5} value={descricao} title="Aceita {{valor}}, {{mes}}, {{MesAnterior}}, {{ano}}" onChange={(e) => setDescricao(e.target.value)} maxLength={1800} required
             placeholder={'Mentoria executiva\nPacote 4 sessões – outubro/2026'} />
         </Campo>
         <div className="grade3">

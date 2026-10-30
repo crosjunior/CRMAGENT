@@ -5,6 +5,7 @@ import { assinarDps } from './assinatura.js';
 import { carregarCertificado } from './certificado.js';
 import { criarClienteSefin, resumirNfse, ErroSefin } from './sefin.js';
 import { calcularVencimento, hojeBR } from './financeiro.js';
+import { contexto, renderizar } from './mensagens.js';
 
 /** Configurações fiscais específicas do cliente que sobrepõem o serviço padrão do emitente. */
 export function servicoDoCliente(cliente, servico) {
@@ -12,6 +13,7 @@ export function servicoDoCliente(cliente, servico) {
     cTribNac: cliente?.cTribNac,
     cTribMun: cliente?.cTribMun,
     cNBS: cliente?.cNBS,
+    cLocPrestacao: cliente?.cLocPrestacao,
     issRetido: cliente?.issRetido,
     pAliq: cliente?.issRetido ? cliente?.aliquotaIss : undefined,
   };
@@ -48,16 +50,28 @@ export function criarEmissor({ config, store, sefinFactory = criarClienteSefin }
     return store.notas.listar().find((n) => n.status === 'pendente' && n.serie === config.serie);
   }
 
+  // A descrição aceita variáveis: {{valor}}, {{mes}}, {{MesAnterior}}, {{ano}}… (padrões do cliente usam {{valor}})
+  function descricaoFinal(tomador, servico) {
+    let valor = '';
+    try {
+      valor = Number(formatarValor(servico.valor)).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    } catch {
+      /* valor inválido: a validação da DPS acusa */
+    }
+    return renderizar(servico.descricao ?? '', { ...contexto({ config, cliente: tomador }), valor });
+  }
+
   function montar(pedido) {
     const tomador = resolverTomador(pedido);
     const servico = servicoDoCliente(tomador, pedido.servico);
+    servico.descricao = descricaoFinal(tomador, servico);
     const nDPS = store.dps.proximo(config.serie);
     return { tomador, servico, nDPS, dps: montarDps({ config, tomador, servico, nDPS }) };
   }
 
   /** Monta a DPS sem enviar: usado para conferência antes da emissão. */
   function preparar(pedido) {
-    const { tomador, nDPS, dps } = montar(pedido);
+    const { tomador, servico, nDPS, dps } = montar(pedido);
     return {
       nDPS,
       idDps: dps.id,
@@ -66,7 +80,7 @@ export function criarEmissor({ config, store, sefinFactory = criarClienteSefin }
         ambiente: config.ambiente,
         prestador: config.prestador.cnpj,
         tomador: { documento: tomador.documento, nome: tomador.nome },
-        descricao: pedido.servico.descricao,
+        descricao: servico.descricao,
         valor: dps.valor,
         competencia: dps.dCompet,
         issRetido: dps.issRetido,
@@ -82,7 +96,7 @@ export function criarEmissor({ config, store, sefinFactory = criarClienteSefin }
     if (pendente)
       throw new Error(`Há uma DPS com resultado incerto (nº ${pendente.nDPS}). Verifique-a antes de emitir outra nota.`);
 
-    const { tomador, nDPS, dps } = montar(pedido);
+    const { tomador, servico, nDPS, dps } = montar(pedido);
     const assinada = assinarDps(dps.xml, dps.id, certificado());
     const dataEmissao = hojeBR();
 
@@ -101,7 +115,7 @@ export function criarEmissor({ config, store, sefinFactory = criarClienteSefin }
       issRetido: dps.issRetido,
       // Com ISS retido o cliente deposita o líquido; a Sefin confirma o valor em vLiq
       valorLiquido: dps.issRetido ? formatarValor(Number(dps.valor) * (1 - Number(dps.pAliq) / 100)) : dps.valor,
-      descricao: pedido.servico.descricao,
+      descricao: servico.descricao,
       tomador: { documento: tomador.documento, nome: tomador.nome, email: tomador.email ?? '' },
       clienteId: tomador.id ?? null,
       situacao: 'aguardando',

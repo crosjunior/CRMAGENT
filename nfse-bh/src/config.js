@@ -38,7 +38,7 @@ export function carregarConfig() {
     prestador: {
       cnpj: digitos(env('PRESTADOR_CNPJ', '29978652000187')),
       im: digitos(env('PRESTADOR_IM', '10733590010')),
-      razaoSocial: env('PRESTADOR_RAZAO', 'CARLOS ROBERTO OLIVEIRA DA SILVA JUNIOR'),
+      razaoSocial: env('PRESTADOR_RAZAO', 'CONEXAO AGIL SOLUCOES EMPRESARIAIS LTDA'),
       nomeFantasia: env('PRESTADOR_FANTASIA', 'Conexão Ágil'),
       fone: digitos(env('PRESTADOR_FONE', '')),
       email: env('PRESTADOR_EMAIL', ''),
@@ -65,11 +65,11 @@ export function carregarConfig() {
       aliquotaIss: env('SERVICO_ALIQUOTA_ISS', '3.00'),
       // Total aproximado de tributos do Simples (Lei 12.741/2012); obrigatório para ME/EPP
       pTotTribSN: env('SERVICO_PTOTTRIB_SN', '6.00'),
-      descricaoRodape: env('SERVICO_RODAPE', 'Dados Bancários\\nBanco Inter - 077').replace(/\\n/g, '\n'),
+      descricaoRodape: env('SERVICO_RODAPE', '').replace(/\\n/g, '\n'),
     },
     cobranca: {
       prazoDias: Number(env('COBRANCA_PRAZO_DIAS', 10)),
-      banco: env('COBRANCA_BANCO', 'Banco Inter - 077'),
+      banco: env('COBRANCA_BANCO', ''),
       agencia: env('COBRANCA_AGENCIA', ''),
       conta: env('COBRANCA_CONTA', ''),
       pix: env('COBRANCA_PIX', ''),

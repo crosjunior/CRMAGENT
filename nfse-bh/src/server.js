@@ -8,7 +8,9 @@ import { criarStore } from './store.js';
 import { criarEmissor } from './emissor.js';
 import { consultarCep, consultarCnpj } from './consultas.js';
 import { camposDaBaixa, situacaoDaNota, hojeBR, valorEsperado } from './financeiro.js';
-import { extrairXmls, importarDocumentos, sugerirAgendas } from './importacao.js';
+import { extrairArquivos, lerArquivos, resolverLocais, importarDocumentos, sugerirAgendas } from './importacao.js';
+import { importarPacote, exportarPacote } from './pacote.js';
+import { cnpjValido, cpfValido } from './dps.js';
 import { criarClienteAdn, sincronizarAdn } from './adn.js';
 import { processarExtrato, confirmarLancamento } from './conciliacao.js';
 import { listarModelos, gerarMensagem, VARIAVEIS, MODELOS_PADRAO } from './mensagens.js';
@@ -74,8 +76,13 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
       };
     });
   }));
+  // O CPF/CNPJ é a chave do cliente: nunca dois cadastros para o mesmo documento
   app.post('/api/clientes', rota((req) => {
     const { resumo, ...cliente } = req.body;
+    const doc = String(cliente.documento ?? '').replace(/\D/g, '');
+    if (!(doc.length === 14 ? cnpjValido(doc) : doc.length === 11 && cpfValido(doc))) throw erro400('CPF/CNPJ inválido');
+    const existente = store.clientes.porDocumento(doc);
+    if (existente && existente.id !== cliente.id) throw erro400(`Já existe um cliente com este CPF/CNPJ: ${existente.nome}`);
     return store.clientes.salvar(cliente);
   }));
   app.delete('/api/clientes/:id', rota((req) => (store.clientes.remover(req.params.id), { ok: true })));
@@ -114,28 +121,41 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
 
   app.get('/api/notas/:id/xml/:tipo', (req, res) => {
     const nota = store.notas.obter(req.params.id);
-    const nome = req.params.tipo === 'nfse' ? nota?.nfseXml : nota?.dpsXml;
+    const nome = { nfse: nota?.nfseXml, dps: nota?.dpsXml, pdf: nota?.danfsePdf }[req.params.tipo];
     if (!nome || !fs.existsSync(store.xml.caminho(nome))) return res.status(404).json({ erro: 'XML não disponível' });
     res.download(store.xml.caminho(nome), nome);
   });
 
   // ---------- Importação do histórico ----------
-  app.post('/api/importar/arquivos', rota((req) => {
-    const documentos = extrairXmls(req.body.arquivos ?? []);
-    if (!documentos.length) throw erro400('Nenhum XML de NFS-e encontrado nos arquivos (envie .xml ou .zip)');
-    return importar(documentos, req.body.opcoes);
+  app.post('/api/importar/arquivos', rota(async (req) => {
+    const arquivos = extrairArquivos(req.body.arquivos ?? []);
+    if (!arquivos.length) throw erro400('Nenhuma NFS-e encontrada nos arquivos (envie .xml, .pdf do DANFSe ou .zip)');
+    const { lidos, erros } = await lerArquivos(arquivos);
+    await resolverLocais(lidos);
+    return importar({ lidos, erros }, req.body.opcoes);
   }));
+
+  // Pacote JSON com emitente, clientes, notas e agenda (backup ou carga inicial preparada)
+  app.post('/api/importar/pacote', rota((req) => {
+    const r = importarPacote({ store, config, pacote: req.body });
+    aplicarEmitente(config, store.emitente.obter());
+    return r;
+  }));
+  app.get('/api/backup', (req, res) => {
+    res.setHeader('Content-Disposition', `attachment; filename="nfse-backup-${hojeBR()}.json"`);
+    res.json(exportarPacote({ store }));
+  });
 
   app.post('/api/importar/adn', rota(async (req) => {
     const adn = criarClienteAdn({ baseUrl: config.adnUrl, cert: emissor.certificado() });
     const { documentos, ultimoNsu } = await sincronizarAdn({ adn, store, cnpj: config.prestador.cnpj });
-    const r = importar(documentos, req.body?.opcoes);
+    const r = importar({ documentos }, req.body?.opcoes);
     store.estado.definir('adn_ultimo_nsu', ultimoNsu);
     return { ...r, documentos: documentos.length, ultimoNsu };
   }));
 
-  function importar(documentos, opcoes) {
-    const r = importarDocumentos({ store, config, documentos, opcoes });
+  function importar(entrada, opcoes) {
+    const r = importarDocumentos({ store, config, ...entrada, opcoes });
     // Completa o emitente com o que veio da nota (só os campos ainda vazios)
     if (r.emitente) {
       const e = r.emitente;
@@ -144,6 +164,8 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
       if (!config.prestador.email && e.email) p.email = e.email;
       if (!config.prestador.fone && e.fone) p.fone = e.fone;
       if (e.nomeFantasia && !config.prestador.nomeFantasia) p.nomeFantasia = e.nomeFantasia;
+      // A razão social da nota é a oficial (cadastro na Receita)
+      if (e.nome && e.nome !== config.prestador.razaoSocial) p.razaoSocial = e.nome;
       if (!config.prestador.endereco?.cep && e.endereco?.cep) p.endereco = { ...config.prestador.endereco, ...e.endereco };
       store.emitente.salvar({ ...atual, prestador: p });
       aplicarEmitente(config, { prestador: p });
@@ -190,12 +212,14 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     const hoje = hojeBR();
     const ate = req.query.ate || new Date(Date.now() + 90 * 864e5).toISOString().slice(0, 10);
     return {
+      ambiente: config.ambiente,
       frequencias: Object.fromEntries(Object.entries(FREQUENCIAS).map(([k, v]) => [k, v.nome])),
       agendas: store.agendas.listar().map((a) => ({
         ...a,
         cliente: store.clientes.obter(a.clienteId)?.nome ?? '(cliente removido)',
         proximas: a.ativo ? ocorrencias(a, '0000-01-01', ate) : [],
-        vencida: a.ativo && a.proximaData && a.proximaData <= hoje,
+        // Vencida e esperando o usuário (lembrete, ou automática fora de produção)
+        vencida: a.ativo && a.proximaData && a.proximaData <= hoje && (a.modo !== 'automatico' || config.ambiente !== 'producao'),
       })),
       sugestoes: sugerirAgendas(store),
     };
@@ -228,7 +252,8 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
   app.post('/api/agendas/:id/emitir', rota(async (req) => {
     const agenda = store.agendas.obter(req.params.id);
     if (!agenda) throw erro400('Agenda não encontrada');
-    return comSituacao(await emitirDaAgenda({ agenda, config, store, emissor, simular: !!req.body?.simular }));
+    const { simular, descricao, valor } = req.body ?? {};
+    return comSituacao(await emitirDaAgenda({ agenda, config, store, emissor, simular: !!simular, ajustes: { descricao, valor } }));
   }));
 
   // Ajuste manual do contador (ex.: continuar a numeração já usada no portal)

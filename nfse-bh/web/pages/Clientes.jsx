@@ -6,7 +6,7 @@ const VAZIO = {
   documento: '', nome: '', nomeFantasia: '', email: '', fone: '', im: '',
   endereco: { cep: '', logradouro: '', numero: '', complemento: '', bairro: '', municipio: '', uf: '', cMun: '' },
   contatoNome: '', emailsCobranca: '', whatsapp: '', prazoDias: '', diaVencimento: '', modeloId: '',
-  cTribNac: '', cTribMun: '', issRetido: false, aliquotaIss: '',
+  cTribNac: '', cTribMun: '', cNBS: '', cLocPrestacao: '', localPrestacao: '', issRetido: false, aliquotaIss: '',
   descricaoPadrao: '', valorPadrao: '', apelidos: [], observacoes: '',
 };
 
@@ -41,7 +41,7 @@ export default function Clientes({ clientes, status, recarregar, emitirPara }) {
                     {c.resumo?.ultimaNota ? ` · última ${fmtData(c.resumo.ultimaNota)}` : ''}
                   </small>
                   <small>
-                    {c.issRetido ? 'ISS retido · ' : ''}{c.cTribNac ? `cód. ${c.cTribNac} · ` : ''}
+                    {c.issRetido ? 'ISS retido · ' : ''}{c.cTribNac ? `cód. ${c.cTribNac} · ` : ''}{c.localPrestacao ? `prestação em ${c.localPrestacao} · ` : ''}
                     {c.valorPadrao ? `padrão ${fmtBRL(c.valorPadrao)}` : ''}
                     {c.resumo?.emAberto ? <span className={c.resumo.atrasadas ? 'txt-erro' : 'txt-alerta'}> · em aberto {fmtBRL(c.resumo.emAberto)}{c.resumo.atrasadas ? ` (${c.resumo.atrasadas} em atraso)` : ''}</span> : ''}
                   </small>
@@ -136,10 +136,15 @@ function FormCliente({ inicial, status, modelos, aoSalvar, aoCancelar }) {
       <div className="grade2">
         <Campo label="Descrição padrão do serviço" largo>
           <textarea rows={3} value={form.descricaoPadrao ?? ''} onChange={set('descricaoPadrao')} placeholder="Preenche a descrição ao emitir para este cliente" />
+          <small>Aceita {'{{valor}}'}, {'{{mes}}'}, {'{{MesAnterior}}'}, {'{{ano}}'}, {'{{anoMesAnterior}}'} — substituídos na emissão</small>
         </Campo>
         <Campo label="Valor padrão (R$)"><input value={form.valorPadrao ?? ''} onChange={set('valorPadrao')} inputMode="decimal" /></Campo>
         <Campo label="Cód. tributação nacional" dica={`vazio = padrão ${sp.cTribNac}`}><input value={form.cTribNac ?? ''} onChange={set('cTribNac')} inputMode="numeric" maxLength={8} /></Campo>
         <Campo label="Cód. tributação municipal" dica={`vazio = padrão ${sp.cTribMun}`}><input value={form.cTribMun ?? ''} onChange={set('cTribMun')} inputMode="numeric" maxLength={3} /></Campo>
+        <Campo label="Código NBS" dica="ex.: 122051900 (1.2205.19.00)"><input value={form.cNBS ?? ''} onChange={set('cNBS')} inputMode="numeric" /></Campo>
+        <Campo label="Local da prestação (código IBGE)" dica={form.localPrestacao ? `${form.localPrestacao}` : `vazio = Belo Horizonte (${sp.cLocPrestacao})`}>
+          <input value={form.cLocPrestacao ?? ''} onChange={set('cLocPrestacao')} inputMode="numeric" maxLength={7} />
+        </Campo>
         <label className="check">
           <input type="checkbox" checked={!!form.issRetido} onChange={set('issRetido')} />
           <span>Cliente retém o ISS (substituto tributário)</span>

@@ -102,7 +102,7 @@ export default function Notas({ notas, clientes, recarregar, notaInicial }) {
             <React.Fragment key={n.id}>
               <button className={`tr ${aberta === n.id ? 'sel' : ''}`} onClick={() => setAberta(aberta === n.id ? null : n.id)}>
                 <span className="cel-cliente"><strong>{n.tomador?.nome}</strong><small>emitida {fmtData(n.dataEmissao ?? n.criadaEm)}</small></span>
-                <span data-l="Nº">{n.numero ?? `DPS ${n.nDPS ?? '—'}`}</span>
+                <span data-l="Nº">{n.numero ?? (n.nDPS ? `DPS ${n.nDPS}` : 's/nº')}</span>
                 <span data-l="Envio">{fmtData(n.dataEnvio)}</span>
                 <span data-l="Vence">{fmtData(n.vencimento)}</span>
                 <span data-l="Pago em">{fmtData(n.dataPagamento)}</span>
@@ -215,6 +215,7 @@ function Detalhe({ nota, recarregar, abrirMensagem }) {
         <button className="sec" onClick={() => salvar({ observacoes: obs })} disabled={obs === (nota.observacoes ?? '')}>Salvar observação</button>
         {nota.dpsXml && <a className="sec btn" href={`/api/notas/${nota.id}/xml/dps`}>XML DPS</a>}
         {nota.nfseXml && <a className="sec btn" href={`/api/notas/${nota.id}/xml/nfse`}>XML NFS-e</a>}
+        {nota.danfsePdf && <a className="sec btn" href={`/api/notas/${nota.id}/xml/pdf`}>PDF DANFSe</a>}
         {nota.chaveAcesso && <a className="sec btn" target="_blank" rel="noreferrer" href={`https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=${nota.chaveAcesso}`}>DANFSe</a>}
       </div>
       <Msg tipo="ok">{msg}</Msg>

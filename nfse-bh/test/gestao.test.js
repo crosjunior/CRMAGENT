@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { criarStore } from '../src/store.js';
 import { carregarConfig } from '../src/config.js';
 import { montarDps } from '../src/dps.js';
-import { lerDocumentoFiscal, importarDocumentos, extrairXmls } from '../src/importacao.js';
+import { lerDocumentoFiscal, importarDocumentos, extrairArquivos, lerArquivos, resolverLocais, limparDescricao } from '../src/importacao.js';
+import { lerDanfsePdf } from '../src/danfse.js';
+import { importarPacote, exportarPacote } from '../src/pacote.js';
+import { criarEmissor } from '../src/emissor.js';
 import { lerExtrato, conciliar, processarExtrato, semelhancaNome, numeroBR } from '../src/conciliacao.js';
 import { calcularVencimento, situacaoDaNota, camposDaBaixa } from '../src/financeiro.js';
 import { avancar, ocorrencias, competenciaPara, emitirDaAgenda, executarVencidas } from '../src/agenda.js';
@@ -18,6 +22,7 @@ const novoStore = () => criarStore(fs.mkdtempSync(path.join(os.tmpdir(), 'nfse-g
 const config = () => {
   const c = carregarConfig();
   c.cobranca = { ...c.cobranca, pix: '29.978.652/0001-87', prazoDias: 10 };
+  c.servicoPadrao = { ...c.servicoPadrao, descricaoRodape: 'Dados Bancários: ITAÚ | Ag: 0001 | CC: 12345-6' };
   return c;
 };
 
@@ -69,7 +74,7 @@ test('importa histórico: clientes com configurações próprias, notas sem dupl
   ];
   const zip = new AdmZip();
   xmls.slice(0, 2).forEach((x, i) => zip.addFile(`notas/n${i}.xml`, Buffer.from(x)));
-  const docs = extrairXmls([
+  const docs = extrairArquivos([
     { nome: 'portal.zip', base64: zip.toBuffer().toString('base64') },
     { nome: 'beta.xml', conteudo: xmls[2] },
   ]);
@@ -222,7 +227,10 @@ test('agenda: datas, competência e emissão automática', async () => {
   store.agendas.salvar({ id: 'ag1', clienteId: cli.id, descricao: 'Mentoria – {{mesAnterior}}/{{ano}}', valor: '1860,00', frequencia: 'mensal', diaMes: 5, proximaData: '2026-11-05', competencia: 'mes_anterior', modo: 'automatico', ativo: true });
   store.agendas.salvar({ id: 'ag2', clienteId: cli.id, descricao: 'Lembrete', valor: '10', frequencia: 'mensal', proximaData: '2026-11-01', modo: 'lembrete', ativo: true });
 
-  const r = await executarVencidas({ config: cfg, store, emissor, hoje: '2026-11-05', log: {} });
+  // Em homologação, automáticas não saem sozinhas
+  const h = await executarVencidas({ config: { ...cfg, ambiente: 'homologacao' }, store, emissor, hoje: '2026-11-05', log: {} });
+  assert.deepEqual([h.emitidas.length, h.lembretes.length, pedidos.length], [0, 2, 0]);
+  const r = await executarVencidas({ config: { ...cfg, ambiente: 'producao' }, store, emissor, hoje: '2026-11-05', log: {} });
   assert.equal(r.emitidas.length, 1);
   assert.equal(r.lembretes.length, 1);
   assert.equal(pedidos[0].servico.descricao, 'Mentoria – outubro/2026');
@@ -257,4 +265,137 @@ test('mensagens: variáveis e escolha do modelo pela situação', () => {
   const comRodape = gerarMensagem({ store, config: cfg, nota: { ...nota, descricao: `Mentoria\n${cfg.servicoPadrao.descricaoRodape}` }, hoje: '2026-10-05' });
   assert.match(comRodape.corpo, /referente a:\nMentoria\n\nValor/); // agência não cadastrada: linha omitida
   assert.equal(renderizar('A\nConta: {{conta}}\nB', { conta: '' }), 'A\nB');
+});
+
+// PDF mínimo com texto posicionado como no DANFSe v2.0 (rótulo e, 8pt abaixo, o valor)
+function pdfDanfse(blocos) {
+  const esc = (s) => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const ops = blocos.map(([x, y, s]) => `BT /F1 6 Tf ${x} ${y} Td (${esc(s)}) Tj ET`).join('\n');
+  const stream = Buffer.from(ops, 'latin1');
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    null,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+  ];
+  const partes = [Buffer.from('%PDF-1.4\n')];
+  const offs = [];
+  let pos = partes[0].length;
+  objs.forEach((o, i) => {
+    const corpo = o === null ? Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`), stream, Buffer.from('\nendstream')]) : Buffer.from(o, 'latin1');
+    const b = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), corpo, Buffer.from('\nendobj\n')]);
+    offs.push(pos);
+    pos += b.length;
+    partes.push(b);
+  });
+  const xref = `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offs.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${pos}\n%%EOF`;
+  return Buffer.concat([...partes, Buffer.from(xref, 'latin1')]);
+}
+
+const CHAVE_PDF = '31062002229978652000187000000000013726101471865419';
+const DANFSE = pdfDanfse([
+  [270, 821, 'DANFSe v2.0'], [446, 809, 'Tipo de Ambiente: 1'],
+  [12, 791, 'CHAVE DE ACESSO DA NFS-e'], [12, 783, CHAVE_PDF],
+  [12, 771, 'NÚMERO DA NFS-e'], [12, 763, '137'], [156, 771, 'COMPETÊNCIA DA NFS-e'], [156, 763, '02/10/2026'],
+  [301, 771, 'DATA E HORA DA EMISSÃO DA NFS-e'], [301, 763, '02/10/2026 11:31:15'],
+  [12, 751, 'NÚMERO DA DPS'], [12, 743, '91'], [156, 751, 'SÉRIE DA DPS'], [156, 743, '70000'],
+  [156, 730, 'SITUAÇÃO DA NFS-e'], [156, 722, 'NFS-e Gerada'],
+  [12, 710, 'PRESTADOR / FORNECEDOR'], [156, 711, 'CNPJ / CPF / NIF'], [156, 703, '29.978.652/0001-87'],
+  [301, 711, 'Indicador Municipal (Inscrição)'], [301, 703, '10733590010'], [446, 711, 'Telefone'], [446, 703, '(31) 90000-0000'],
+  [12, 694, 'Nome / Nome Empresarial'], [12, 686, 'CONEXAO AGIL SOLUCOES EMPRESARIAIS LTDA'],
+  [301, 694, 'Município / Sigla UF'], [301, 686, 'Belo Horizonte / MG'], [446, 694, 'Código IBGE / CEP'], [446, 686, '31.06200 / 30.140-000'],
+  [12, 677, 'Endereço'], [12, 669, 'RUA EXEMPLO, 10, CENTRO'], [301, 677, 'E-mail'], [301, 669, 'contato@exemplo.com.br'],
+  [12, 650, 'TOMADOR / ADQUIRENTE'], [156, 651, 'CNPJ / CPF / NIF'], [156, 643, '11.444.777/0001-61'],
+  [301, 651, 'Indicador Municipal (Inscrição)'], [301, 643, '-'], [446, 651, 'Telefone'], [446, 643, '-'],
+  [12, 634, 'Nome / Nome Empresarial'], [12, 626, 'ACME TREINAMENTOS LTDA'],
+  [301, 634, 'Município / Sigla UF'], [301, 626, 'Belo Jardim / PE'], [446, 634, 'Código IBGE / CEP'], [446, 626, '26.01706 / 55.150-615'],
+  [12, 617, 'Endereço'], [12, 609, 'RUA DIARIO, 195, SALA 2, CENTRO'], [301, 617, 'E-mail'], [301, 609, 'fin@acme.com.br'],
+  [12, 580, 'SERVIÇO PRESTADO'], [156, 580, 'Código de Tributação Nacional/Municipal'], [156, 572, '08.02.01 / 001'],
+  [301, 580, 'Código da NBS'], [301, 572, '1.2205.19.00'], [446, 580, 'Local da Prestação / Sigla UF / País'], [446, 572, 'Recife / PE / -'],
+  [12, 555, 'Descrição do Serviço'], [12, 547, 'Planejamento Estratégico GPD | R$ 5.000,00 Dados Bancários: ITAÚ | PIX/CNPJ: 29978652000187 | Ag: 0637 | CC:'],
+  [12, 540, '98352-9'],
+  [12, 530, 'TRIBUTAÇÃO MUNICIPAL (ISSQN)'], [156, 512, 'Alíquota Aplicada'], [156, 504, '-'], [301, 512, 'Retenção do ISSQN'], [301, 504, 'Não Retido'],
+  [156, 450, 'VALOR DA OPERAÇÃO / SERVIÇO'], [156, 442, 'R$ 5.000,00'], [156, 432, 'VALOR LÍQUIDO DA NFS-e'], [156, 424, 'R$ 5.000,00'],
+]);
+
+test('lê o DANFSe em PDF e importa com local da prestação, NBS e descrição limpa', async () => {
+  const n = await lerDanfsePdf(DANFSE);
+  assert.equal(n.tipo, 'nfse');
+  assert.equal(n.chaveAcesso, CHAVE_PDF);
+  assert.deepEqual([n.numero, n.dataEmissao, n.competencia, n.serie, n.ambiente], ['137', '2026-10-02', '2026-10-02', '70000', 'producao']);
+  assert.equal(n.prestador.nome, 'CONEXAO AGIL SOLUCOES EMPRESARIAIS LTDA');
+  assert.deepEqual([n.tomador.documento, n.tomador.nome, n.tomador.email], ['11444777000161', 'ACME TREINAMENTOS LTDA', 'fin@acme.com.br']);
+  assert.deepEqual(n.tomador.endereco, { cep: '55150615', cMun: '2601706', municipio: 'Belo Jardim', uf: 'PE', logradouro: 'RUA DIARIO', numero: '195', complemento: 'SALA 2', bairro: 'CENTRO' });
+  assert.deepEqual([n.cTribNac, n.cTribMun, n.cNBS, n.valor, n.issRetido], ['080201', '001', '122051900', '5000.00', false]);
+  assert.match(n.descricao, /^Planejamento Estratégico GPD/);
+
+  const arquivos = extrairArquivos([{ nome: 'nota.pdf', base64: DANFSE.toString('base64') }]);
+  const { lidos } = await lerArquivos(arquivos);
+  await resolverLocais(lidos, async (uf) => (uf === 'PE' ? [{ id: '2611606', nome: 'Recife' }] : []));
+  assert.equal(lidos[0].cLocPrestacao, '2611606');
+
+  const store = novoStore();
+  const r = importarDocumentos({ store, config: config(), lidos });
+  assert.equal(r.notasNovas, 1);
+  const cli = store.clientes.porDocumento('11444777000161');
+  assert.deepEqual([cli.cLocPrestacao, cli.cNBS, cli.localPrestacao], ['2611606', '122051900', 'Recife/PE']);
+  assert.equal(cli.descricaoPadrao, 'Planejamento Estratégico GPD | R$ {{valor}}');
+  assert.equal(store.notas.porChave(CHAVE_PDF).danfsePdf, `${CHAVE_PDF}-danfse.pdf`);
+});
+
+test('descrição: tira dados bancários e troca o valor por {{valor}}', () => {
+  assert.equal(limparDescricao('Suporte OIA e IA Dados Bancários: ITAÚ | PIX/CNPJ: 29978652000187 | Ag: 0637 | CC: 98352-9 Valor: R$ 1.800,00'), 'Suporte OIA e IA Valor: R$ {{valor}}');
+  assert.equal(limparDescricao('Acompanhamento 2026 R$ 8.500,00 Dados Bancários PIX/CNPJ: 29978652000187 Banco Itaú - 341| Agência: 0637 | Conta: 98352-9'), 'Acompanhamento 2026 R$ {{valor}}');
+  assert.equal(limparDescricao('Workshop OKR'), 'Workshop OKR');
+});
+
+test('emissão: descrição com {{valor}}, {{MesAnterior}} e local da prestação do cliente', () => {
+  const store = novoStore();
+  const cfg = config();
+  cfg.certificado = { pfxPath: fileURLToPath(new URL('./fixtures/teste.pfx', import.meta.url)), senha: '1234' };
+  const cli = store.clientes.salvar({ ...ACME, cLocPrestacao: '2611606', cNBS: '122051900', descricaoPadrao: 'Mentoria {{MesAnterior}}/{{anoMesAnterior}} – R$ {{valor}}' });
+  const emissor = criarEmissor({ config: cfg, store });
+  const p = emissor.preparar({ clienteId: cli.id, servico: { descricao: cli.descricaoPadrao, valor: '1860' } });
+  assert.match(p.resumo.descricao, /^Mentoria [A-Z][a-zç]+\/\d{4} – R\$ 1\.860,00$/);
+  assert.match(p.xml, /<cLocPrestacao>2611606<\/cLocPrestacao>/);
+  assert.match(p.xml, /<cNBS>122051900<\/cNBS>/);
+});
+
+test('pacote: clientes pelo CNPJ (sem duplicar), notas sem chave e agenda; reimportar não duplica', () => {
+  const store = novoStore();
+  const cfg = config();
+  store.clientes.salvar({ ...ACME, email: 'antigo@acme.com.br' });
+  const pacote = {
+    emitente: { prestador: { razaoSocial: 'CONEXAO AGIL SOLUCOES EMPRESARIAIS LTDA', endereco: { cep: '30140000' } }, cobranca: { prazoDias: 30 } },
+    clientes: [{ ...ACME, documento: '11.444.777/0001-61', email: 'novo@acme.com.br' }, { ...BETA }, { nome: 'Sem doc' }],
+    notas: [
+      { clienteDocumento: ACME.documento, dataEmissao: '2026-10-02', valor: '26900', descricao: 'x' },
+      { clienteDocumento: BETA.documento, chaveAcesso: chave(9), numero: '9', dataEmissao: '2026-10-03', valor: '100' },
+    ],
+    agendas: [{ id: 'ag-acme', clienteDocumento: ACME.documento, descricao: 'Mensal', valor: '1.860,00', frequencia: 'mensal', proximaData: '2026-11-02', diaMes: 2, modo: 'automatico' }],
+  };
+  const r = importarPacote({ store, config: cfg, pacote });
+  assert.deepEqual([r.clientesNovos, r.clientesAtualizados, r.notasNovas, r.agendas], [1, 1, 2, 1]);
+  assert.equal(r.avisos.length, 1);
+  assert.equal(store.clientes.listar().length, 2);
+  assert.equal(store.clientes.porDocumento(ACME.documento).email, 'novo@acme.com.br');
+  assert.equal(store.emitente.obter().cobranca.prazoDias, 30);
+
+  const r2 = importarPacote({ store, config: cfg, pacote });
+  assert.deepEqual([r2.clientesNovos, r2.notasNovas, r2.notasExistentes], [0, 0, 2]);
+  assert.equal(store.agendas.listar().length, 1);
+  assert.equal(store.clientes.listar().length, 2);
+
+  // A nota sem chave é completada quando a NFS-e real é importada depois
+  const xml = nfseXml({ numero: 140, data: '2026-10-02', tomador: ACME, valor: '26900', descricao: 'Formação', chave: chave(140) });
+  const ri = importarDocumentos({ store, config: cfg, documentos: [{ nome: 'n.xml', xml }] });
+  assert.equal(ri.notasNovas, 0);
+  const completa = store.notas.listar().filter((n) => n.tomador.documento === ACME.documento);
+  assert.equal(completa.length, 1);
+  assert.equal(completa[0].numero, '140');
+
+  const backup = exportarPacote({ store });
+  assert.equal(backup.agendas[0].clienteDocumento, ACME.documento);
+  assert.equal(backup.notas.length, 2);
 });

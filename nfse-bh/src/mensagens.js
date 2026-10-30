@@ -2,6 +2,7 @@
 import { hojeBR, situacaoDaNota, valorEsperado } from './financeiro.js';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const maiuscula = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const brl = (v) => (v == null || v === '' ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 const dataBR = (d) => (d ? d.slice(0, 10).split('-').reverse().join('/') : '');
 const fmtDoc = (d) => {
@@ -41,8 +42,11 @@ export const VARIAVEIS = [
   ['conta', 'Conta'],
   ['pix', 'Chave PIX'],
   ['mes', 'Mês atual por extenso'],
+  ['Mes', 'Mês atual com inicial maiúscula'],
   ['mesAnterior', 'Mês anterior por extenso'],
+  ['MesAnterior', 'Mês anterior com inicial maiúscula'],
   ['ano', 'Ano atual'],
+  ['anoMesAnterior', 'Ano do mês anterior (em janeiro, o ano passado)'],
   ['hoje', 'Data de hoje'],
 ];
 
@@ -142,8 +146,11 @@ export function contexto({ config, cliente, nota, hoje = hojeBR() }) {
     conta: c.conta ?? '',
     pix: c.pix ?? '',
     mes: MESES[m - 1],
+    Mes: maiuscula(MESES[m - 1]),
     mesAnterior: MESES[(m + 10) % 12],
+    MesAnterior: maiuscula(MESES[(m + 10) % 12]),
     ano: String(a),
+    anoMesAnterior: String(m === 1 ? a - 1 : a),
     hoje: dataBR(hoje),
   };
 }

@@ -39,7 +39,7 @@ function Importar({ status, recarregar, irPara }) {
     e.target.value = '';
     if (!lista.length) return;
     await rodar('arquivos', async () => {
-      const arqs = await Promise.all(lista.map(async (f) => (/\.zip$/i.test(f.name) ? { nome: f.name, base64: await lerArquivoBase64(f) } : { nome: f.name, conteudo: await lerArquivoTexto(f) })));
+      const arqs = await Promise.all(lista.map(async (f) => (/\.xml$/i.test(f.name) ? { nome: f.name, conteudo: await lerArquivoTexto(f) } : { nome: f.name, base64: await lerArquivoBase64(f) })));
       return api('/api/importar/arquivos', { method: 'POST', body: { arquivos: arqs, opcoes: opcoes() } });
     });
   }
@@ -56,8 +56,8 @@ function Importar({ status, recarregar, irPara }) {
       </Campo>
       <div className="acoes esq">
         <label className={`pri btn upload ${ocupado ? 'desab' : ''}`}>
-          {ocupado === 'arquivos' ? 'Importando…' : 'Enviar XML ou ZIP das notas'}
-          <input type="file" accept=".xml,.zip" multiple hidden onChange={arquivos} disabled={!!ocupado} />
+          {ocupado === 'arquivos' ? 'Importando…' : 'Enviar notas (PDF, XML ou ZIP)'}
+          <input type="file" accept=".xml,.zip,.pdf" multiple hidden onChange={arquivos} disabled={!!ocupado} />
         </label>
         <button className="sec" disabled={!!ocupado || !status.certificado.ok}
           onClick={() => rodar('adn', () => api('/api/importar/adn', { method: 'POST', body: { opcoes: opcoes() } }))}>
@@ -65,11 +65,39 @@ function Importar({ status, recarregar, irPara }) {
         </button>
       </div>
       <p className="vazio">
-        No portal Emissor Nacional: <em>Notas Emitidas → selecionar → Download XML</em>. Ou use a sincronização, que baixa tudo direto do Ambiente
+        Aceita o PDF (DANFSe) ou o XML baixados do portal Emissor Nacional, soltos ou em ZIP. Ou use a sincronização, que baixa tudo direto do Ambiente
         Nacional com o seu certificado {status.ultimoNsuAdn ? `(último NSU ${status.ultimoNsuAdn})` : ''}.
       </p>
+      <h3 className="secao">Pacote de dados e backup</h3>
+      <p className="vazio">O pacote (.json) traz emitente, clientes, notas e agenda de uma vez — para restaurar um backup ou carregar dados preparados. Clientes são casados pelo CNPJ: nunca duplicam.</p>
+      <div className="acoes esq">
+        <label className={`sec btn upload ${ocupado ? 'desab' : ''}`}>
+          {ocupado === 'pacote' ? 'Importando…' : 'Importar pacote (.json)'}
+          <input type="file" accept=".json" hidden disabled={!!ocupado} onChange={async (e) => {
+            const f = e.target.files[0];
+            e.target.value = '';
+            if (!f) return;
+            await rodar('pacote', async () => {
+              const p = await api('/api/importar/pacote', { method: 'POST', body: JSON.parse(await lerArquivoTexto(f)) });
+              return { pacote: p };
+            });
+          }} />
+        </label>
+        <a className="sec btn" href="/api/backup">Baixar backup</a>
+      </div>
       <Msg tipo="erro">{erro}</Msg>
-      {r && (
+      {r?.pacote && (
+        <div className="caixa">
+          <strong>Pacote importado: {r.pacote.clientesNovos} cliente(s) novo(s), {r.pacote.clientesAtualizados} atualizado(s), {r.pacote.notasNovas} nota(s), {r.pacote.agendas} agendamento(s)</strong>
+          <small className="vazio">{r.pacote.notasExistentes} nota(s) já existiam{r.pacote.emitente ? ' · dados do emitente atualizados' : ''}</small>
+          {r.pacote.avisos?.map((a, i) => <Msg key={i} tipo="alerta">{a}</Msg>)}
+          <div className="acoes esq">
+            <button className="sec" onClick={() => irPara('clientes')}>Ver clientes</button>
+            <button className="sec" onClick={() => irPara('agenda')}>Ver agenda</button>
+          </div>
+        </div>
+      )}
+      {r && !r.pacote && (
         <div className="caixa">
           <strong>{r.notasNovas} nota(s) importada(s) · {r.clientes} cliente(s) cadastrado(s)/atualizado(s)</strong>
           <small className="vazio">

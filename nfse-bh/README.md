@@ -34,11 +34,18 @@ Cliente + descrição + valor
 ### Importar as notas já emitidas
 
 Em **Config → Importar histórico**:
-- **Enviar XML ou ZIP**: no portal Emissor Nacional, *Notas Emitidas → Download XML*.
+- **Enviar notas (PDF, XML ou ZIP)**: o DANFSe em PDF ou o XML baixados do portal Emissor Nacional. Do PDF a
+  aplicação lê chave, número, datas, tomador (com endereço e IBGE), códigos de serviço, NBS, local da
+  prestação, valores e retenção; o código IBGE do local da prestação é consultado na API do IBGE.
+- **Importar pacote (.json)**: emitente, clientes, notas e agenda de uma vez (backup ou carga preparada).
+  **Baixar backup** gera o mesmo formato.
 - **Sincronizar com o portal (ADN)**: baixa direto do Ambiente de Dados Nacional, com o certificado, todas as NFS-e
   e eventos da empresa (incluindo cancelamentos). Pode ser repetido; só traz o que é novo.
 
-Cada cliente é cadastrado com as configurações da nota mais recente dele. Notas antigas (mais de N dias,
+O **CPF/CNPJ é a chave do cliente**: importações atualizam o cadastro existente e o formulário recusa
+um segundo cliente com o mesmo documento. Cada cliente é cadastrado com as configurações da nota mais recente dele
+(código de serviço, NBS, local da prestação, ISS retido); a descrição padrão sai sem os dados bancários
+(que vêm do rodapé) e com o valor trocado por `{{valor}}`. Notas antigas (mais de N dias,
 configurável) entram como pagas; as recentes, como "aguardando pagamento", para baixar pelo extrato.
 
 ### Baixa automática pelo extrato
@@ -48,6 +55,18 @@ há ISS retido), emitidas até 5 dias depois do pagamento ou antes dele, e compa
 fantasia, nomes alternativos ou CNPJ do cliente. Valor + nome/CNPJ conferindo, com um único candidato → baixa
 automática. Valor conferindo sem nome, ou mais de um candidato → fica em "A conferir". Reimportar o mesmo
 extrato não duplica baixas.
+
+### Descrição com variáveis
+
+Descrições (do cliente, da agenda ou digitadas) aceitam `{{valor}}`, `{{mes}}`/`{{Mes}}`,
+`{{mesAnterior}}`/`{{MesAnterior}}`, `{{ano}}`, `{{anoMesAnterior}}` e `{{hoje}}`, substituídas na emissão.
+Ex.: `Profissional Fluig - {{MesAnterior}}/{{anoMesAnterior}} R$ {{valor}}`.
+
+### Agenda automática
+
+No modo automático a nota é emitida na data **somente com `NFSE_AMBIENTE=producao`**; em homologação ela
+aparece como lembrete (para a data não ser consumida por uma nota de teste). Ao emitir um lembrete, a descrição
+e o valor podem ser ajustados só para aquela nota (ex.: número do pedido de compra do mês).
 
 ## Requisitos
 

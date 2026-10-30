@@ -33,7 +33,7 @@ export default function Agenda({ clientes, recarregarTudo }) {
   async function emitir(a, simular) {
     setErro('');
     try {
-      const n = await api(`/api/agendas/${a.id}/emitir`, { method: 'POST', body: { simular } });
+      const n = await api(`/api/agendas/${a.id}/emitir`, { method: 'POST', body: { simular, descricao: a.descricaoAjustada, valor: a.valorAjustado } });
       setAviso(`${a.cliente}: nota ${n.status}${n.numero ? ` nº ${n.numero}` : ''}.`);
       setEmitindo(null);
       carregar();
@@ -49,7 +49,7 @@ export default function Agenda({ clientes, recarregarTudo }) {
     .flatMap((a) => a.proximas.map((d) => ({ data: d, agenda: a })))
     .sort((x, y) => x.data.localeCompare(y.data));
   const porMes = eventos.reduce((m, e) => ((m[e.data.slice(0, 7)] ??= []).push(e), m), {});
-  const vencidas = dados.agendas.filter((a) => a.vencida && a.modo !== 'automatico');
+  const vencidas = dados.agendas.filter((a) => a.vencida);
 
   return (
     <section>
@@ -79,7 +79,8 @@ export default function Agenda({ clientes, recarregarTudo }) {
           </div>
           <p className="vazio">
             <strong>Lembrete</strong>: a nota aparece em “Para emitir hoje” e você emite com um clique.{' '}
-            <strong>Automático</strong>: a aplicação emite sozinha na data (com ela aberta), sem confirmação.
+            <strong>Automático</strong>: a aplicação emite sozinha na data (com ela aberta), sem confirmação — só em produção;
+            {dados.ambiente !== 'producao' ? ' agora, em homologação, as automáticas aparecem como lembrete.' : ''}
           </p>
           {dados.agendas.length === 0 && <p className="vazio">Nenhuma emissão planejada.</p>}
           <ul className="lista">
@@ -143,11 +144,15 @@ export default function Agenda({ clientes, recarregarTudo }) {
         <Modal titulo="Emitir nota planejada" aoFechar={() => setEmitindo(null)}>
           <dl className="resumo">
             <dt>Cliente</dt><dd>{emitindo.cliente}</dd>
-            <dt>Serviço</dt><dd className="pre">{emitindo.descricao}</dd>
-            <dt>Valor</dt><dd>{fmtBRL(String(emitindo.valor).replace(/\./g, '').replace(',', '.'))}</dd>
             <dt>Competência</dt><dd>{emitindo.competencia === 'mes_anterior' ? 'último dia do mês anterior' : 'data de hoje'}</dd>
           </dl>
-          <p className="vazio">Variáveis como {'{{mes}}'} são substituídas na emissão.</p>
+          <Campo label="Descrição desta nota" dica="Ajuste o que muda no mês (ex.: nº do pedido). Variáveis como {{valor}} e {{MesAnterior}} são substituídas na emissão.">
+            <textarea rows={4} value={emitindo.descricaoAjustada ?? emitindo.descricao} onChange={(e) => setEmitindo({ ...emitindo, descricaoAjustada: e.target.value })} />
+          </Campo>
+          <Campo label="Valor (R$)">
+            <input inputMode="decimal" value={emitindo.valorAjustado ?? emitindo.valor} onChange={(e) => setEmitindo({ ...emitindo, valorAjustado: e.target.value })} />
+          </Campo>
+          {/\[informar\]/i.test(emitindo.descricaoAjustada ?? emitindo.descricao) && <Msg tipo="alerta">Substitua os trechos “[informar]” antes de emitir.</Msg>}
           <div className="acoes">
             <button className="sec" onClick={() => setEmitindo(null)}>Voltar</button>
             <button className="sec" onClick={() => emitir(emitindo, true)}>Simular</button>

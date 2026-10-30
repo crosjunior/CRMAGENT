@@ -10,6 +10,7 @@ export const FREQUENCIAS = {
   mensal: { nome: 'Mensal', meses: 1 },
   bimestral: { nome: 'Bimestral', meses: 2 },
   trimestral: { nome: 'Trimestral', meses: 3 },
+  quadrimestral: { nome: 'Quadrimestral', meses: 4 },
   semestral: { nome: 'Semestral', meses: 6 },
   anual: { nome: 'Anual', meses: 12 },
 };
@@ -69,8 +70,11 @@ export function pedidoDaAgenda({ agenda, config, store, hoje }) {
 }
 
 /** Emite uma ocorrência da agenda e avança a próxima data (só se a nota foi gerada). */
-export async function emitirDaAgenda({ agenda, config, store, emissor, hoje = hojeBR(), simular = false }) {
+export async function emitirDaAgenda({ agenda, config, store, emissor, hoje = hojeBR(), simular = false, ajustes = {} }) {
   const pedido = pedidoDaAgenda({ agenda, config, store, hoje });
+  // Ajustes desta emissão (ex.: número do pedido de compra do mês), sem mudar a agenda
+  if (ajustes.descricao) pedido.servico.descricao = ajustes.descricao;
+  if (ajustes.valor) pedido.servico.valor = ajustes.valor;
   const nota = await emissor.emitir({ ...pedido, confirmado: true, simular });
   const ok = nota.status === 'autorizada' || nota.status === 'simulada';
   const prox = ok ? avancar(agenda.proximaData, agenda.frequencia, agenda.diaMes) : agenda.proximaData;
@@ -92,7 +96,9 @@ export async function emitirDaAgenda({ agenda, config, store, emissor, hoje = ho
 export async function executarVencidas({ config, store, emissor, hoje = hojeBR(), log = console }) {
   const vencidas = store.agendas.listar().filter((a) => a.ativo && !a.pausadaPorErro && a.proximaData && a.proximaData <= hoje);
   const emitidas = [];
-  for (const a of vencidas.filter((x) => x.modo === 'automatico')) {
+  // Em homologação nada sai sozinho: a ocorrência consumida por uma nota de teste faria falta em produção
+  const automaticas = config.ambiente === 'producao' ? vencidas.filter((x) => x.modo === 'automatico') : [];
+  for (const a of automaticas) {
     try {
       const nota = await emitirDaAgenda({ agenda: a, config, store, emissor, hoje });
       emitidas.push(nota);
@@ -102,5 +108,5 @@ export async function executarVencidas({ config, store, emissor, hoje = hojeBR()
       log.error?.(`[agenda] ${a.id}: ${e.message}`);
     }
   }
-  return { emitidas, lembretes: vencidas.filter((x) => x.modo !== 'automatico') };
+  return { emitidas, lembretes: vencidas.filter((x) => !automaticas.includes(x)) };
 }
