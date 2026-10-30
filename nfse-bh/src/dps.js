@@ -119,7 +119,7 @@ export function validarEntrada({ config, tomador, servico, nDPS }) {
 /**
  * Monta o XML da DPS, sem assinatura.
  * tomador: { documento, nome, email?, fone?, im?, endereco?: { cep, cMun, logradouro, numero, complemento, bairro } }
- * servico: { descricao, valor, competencia?, cTribNac?, cTribMun?, cNBS?, cLocPrestacao?, pAliq?, pTotTribSN? }
+ * servico: { descricao, valor, competencia?, cTribNac?, cTribMun?, cNBS?, cLocPrestacao?, pAliq?, pTotTribSN?, issRetido? }
  */
 export function montarDps({ config, tomador, servico, nDPS, agora = new Date() }) {
   const erros = validarEntrada({ config, tomador, servico, nDPS });
@@ -183,14 +183,18 @@ export function montarDps({ config, tomador, servico, nDPS, agora = new Date() }
   else if (p.opSimpNac === '3') totTrib = `<pTotTribSN>${formatarValor(s.pTotTribSN)}</pTotTribSN>`;
   else totTrib = `<pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib>`;
 
+  const retido = s.issRetido === true || s.issRetido === 'true';
+  const pAliq = retido ? s.pAliq || s.aliquotaIss : s.pAliq;
+
   const valores =
     '<valores>' +
     `<vServPrest><vServ>${formatarValor(s.valor)}</vServ></vServPrest>` +
     '<trib>' +
     '<tribMun>' +
     '<tribISSQN>1</tribISSQN>' + // operação tributável
-    '<tpRetISSQN>1</tpRetISSQN>' + // não retido
-    (s.pAliq ? `<pAliq>${formatarValor(s.pAliq)}</pAliq>` : '') +
+    // 1 não retido; 2 retido pelo tomador (Simples com retenção exige a alíquota na DPS)
+    `<tpRetISSQN>${retido ? '2' : '1'}</tpRetISSQN>` +
+    (pAliq ? `<pAliq>${formatarValor(pAliq)}</pAliq>` : '') +
     '</tribMun>' +
     grupo('totTrib', totTrib) +
     '</trib>' +
@@ -215,5 +219,5 @@ export function montarDps({ config, tomador, servico, nDPS, agora = new Date() }
     '</infDPS>' +
     '</DPS>';
 
-  return { xml, id, dhEmi, dCompet, valor: formatarValor(s.valor) };
+  return { xml, id, dhEmi, dCompet, valor: formatarValor(s.valor), issRetido: retido, pAliq: pAliq ? formatarValor(pAliq) : null };
 }

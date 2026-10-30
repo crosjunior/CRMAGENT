@@ -19,6 +19,36 @@ Cliente + descrição + valor
    → NFS-e (chave de acesso + XML) salva em data/
 ```
 
+## Módulos
+
+| Aba | O que faz |
+|---|---|
+| **Emitir** | Escolhe o cliente (descrição, valor, código de serviço e ISS retido vêm do cadastro dele), confere e emite |
+| **Notas** | Controle financeiro: aguardando pagamento, em atraso, pago, cancelada, substituída; datas de envio, vencimento e pagamento; baixa manual; observações por nota; mensagem pronta; exportação CSV |
+| **Clientes** | Cadastro com configurações por cliente: código de serviço, ISS retido e alíquota, descrição/valor padrão, prazo ou dia fixo de vencimento, contato, e-mails de cobrança, WhatsApp, modelo de mensagem, nomes alternativos no extrato |
+| **Agenda** | Emissões planejadas por data ou frequência (semanal a anual), em modo *lembrete* (um clique) ou *automático*; calendário de 90 dias; sugestões a partir do histórico |
+| **Mensagens** | Modelos de texto com variáveis (`{{cliente.contato}}`, `{{nota.valorAPagar}}`, `{{nota.vencimento}}`, `{{pix}}`…) e prévia com dados reais; envio por e-mail, WhatsApp ou cópia |
+| **Extrato** | Importa OFX, CSV ou TXT do banco e dá baixa automática casando valor (bruto ou líquido) com nome/CNPJ do cliente; casos ambíguos ficam para confirmar |
+| **Config** | Importação do histórico (XML/ZIP do portal ou sincronização pelo ADN), dados do emitente, serviço padrão, dados bancários, numeração |
+
+### Importar as notas já emitidas
+
+Em **Config → Importar histórico**:
+- **Enviar XML ou ZIP**: no portal Emissor Nacional, *Notas Emitidas → Download XML*.
+- **Sincronizar com o portal (ADN)**: baixa direto do Ambiente de Dados Nacional, com o certificado, todas as NFS-e
+  e eventos da empresa (incluindo cancelamentos). Pode ser repetido; só traz o que é novo.
+
+Cada cliente é cadastrado com as configurações da nota mais recente dele. Notas antigas (mais de N dias,
+configurável) entram como pagas; as recentes, como "aguardando pagamento", para baixar pelo extrato.
+
+### Baixa automática pelo extrato
+
+Para cada crédito do extrato, a aplicação procura notas em aberto com o mesmo valor (bruto ou líquido, quando
+há ISS retido), emitidas até 5 dias depois do pagamento ou antes dele, e compara a descrição do lançamento com o nome, nome
+fantasia, nomes alternativos ou CNPJ do cliente. Valor + nome/CNPJ conferindo, com um único candidato → baixa
+automática. Valor conferindo sem nome, ou mais de um candidato → fica em "A conferir". Reimportar o mesmo
+extrato não duplica baixas.
+
 ## Requisitos
 
 - Node.js 20+
@@ -68,7 +98,11 @@ Pede confirmação antes de enviar; `--sim` confirma direto (uso em scripts), `-
 | `POST` | `/api/notas` | emite; exige `"confirmado": true` (ou `"simular": true`) |
 | `GET` | `/api/notas` | histórico |
 | `POST` | `/api/notas/:id/verificar` | resolve nota pendente consultando a DPS na Sefin |
+| `PATCH` | `/api/notas/:id` | baixa (`{"baixa":{"tipo":"pago","dataPagamento":"2026-10-20"}}`), observações, envio, vencimento |
 | `GET/POST/DELETE` | `/api/clientes` | cadastro de tomadores |
+| `POST` | `/api/importar/arquivos` · `/api/importar/adn` | importação do histórico |
+| `POST` | `/api/extrato` | conciliação bancária (`{ nome, conteudo }`) |
+| `GET/POST` | `/api/agendas` · `/api/modelos` | planejamento e modelos de mensagem |
 
 ```json
 POST /api/notas
@@ -99,6 +133,11 @@ ISSQN vai como *operação tributável, não retido*, local da prestação BH.
 - Servidor escuta só em `127.0.0.1`; certificado, `.env` e `data/` estão no `.gitignore`.
 - Se já emitiu notas pelo portal, ajuste o próximo nº da DPS em **Config** para não colidir com a série usada lá.
 
+## Privacidade
+
+Clientes, notas, extratos e dados do emitente ficam somente em `data/` na sua máquina (fora do git). O
+repositório é público: não coloque dados de clientes no código.
+
 ## Testes
 
 ```bash
@@ -115,5 +154,8 @@ cliente HTTP com mTLS contra um servidor local. Os XSD oficiais estão em `schem
   Faça as primeiras emissões em homologação.
 - **DANFSe (PDF)**: a API nacional de DANFSe foi desativada em 08/2026; a app oferece o XML e o link da consulta
   pública, onde o PDF pode ser baixado.
-- **Cancelamento** e **substituição** ainda não implementados (fazer pelo portal).
+- **Cancelamento** e **substituição** fiscais são feitos no portal; aqui a nota é marcada no controle (ou o
+  evento é importado pela sincronização com o ADN).
+- **Modo automático da agenda** só emite com a aplicação rodando (o agendador verifica a cada 15 minutos).
+- **E-mail**: a mensagem abre no seu cliente de e-mail (ou WhatsApp); a aplicação não envia e-mail sozinha.
 - **IBS/CBS** (reforma tributária): grupo opcional da DPS ainda não preenchido.
