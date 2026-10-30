@@ -30,10 +30,13 @@ Cliente + descrição + valor
 ```bash
 cd nfse-bh
 npm install
-cp .env.example .env    # preencha CNPJ, IM, caminho e senha do .pfx
+cp .env.example .env    # Windows (cmd/PowerShell): copy .env.example .env
 mkdir certificado        # coloque o .pfx aqui (ignorado pelo git)
 npm start                # http://localhost:3333
 ```
+
+Preencha no `.env` o CNPJ, a IM, o caminho e a senha do `.pfx`. No Windows, use barras normais no caminho
+(`NFSE_PFX_PATH=certificado/empresa.pfx`) e não coloque aspas na senha.
 
 Comece em `NFSE_AMBIENTE=homologacao` (produção restrita, sem valor fiscal). Quando as notas de teste
 saírem sem erro, troque para `producao`.

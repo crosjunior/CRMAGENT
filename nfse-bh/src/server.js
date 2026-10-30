@@ -2,6 +2,7 @@
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { carregarConfig } from './config.js';
 import { criarStore } from './store.js';
 import { criarEmissor } from './emissor.js';
@@ -64,7 +65,8 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
   return app;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL: no Windows o argv vem como C:\... e a URL do módulo como file:///C:/...
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = carregarConfig();
   criarApp({ config }).listen(config.porta, '127.0.0.1', () => {
     console.log(`NFS-e BH rodando em http://localhost:${config.porta}  (ambiente: ${config.ambiente})`);
