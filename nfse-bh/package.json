@@ -1,0 +1,29 @@
+{
+  "name": "nfse-bh",
+  "version": "1.0.0",
+  "description": "Emissor automático de NFS-e (Padrão Nacional / Sefin Nacional) para prestadores de Belo Horizonte",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "esbuild web/App.jsx --bundle --minify --target=es2017 --format=iife --jsx=automatic --outfile=public/app.js",
+    "start": "npm run build && node src/server.js",
+    "dev": "node --watch src/server.js",
+    "emitir": "node src/cli.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.8.15",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.3",
+    "node-forge": "^1.4.2",
+    "xml-crypto": "^6.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
