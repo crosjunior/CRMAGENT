@@ -4,7 +4,7 @@ import https from 'node:https';
 import { gunzipB64 } from './sefin.js';
 
 export function criarClienteAdn({ baseUrl, cert, timeoutMs = 60_000 }) {
-  const agent = new https.Agent({ pfx: cert.pfx, passphrase: cert.senha, keepAlive: true });
+  const agent = new https.Agent({ ...cert.tls, keepAlive: true });
 
   function get(caminho) {
     return new Promise((resolve, reject) => {

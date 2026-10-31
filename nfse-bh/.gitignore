@@ -5,6 +5,7 @@ certificado/
 *.pfx
 *.p12
 !test/fixtures/teste.pfx
+!test/fixtures/legado.pfx
 public/app.js
 # Arquivos para carga (pacote .json, notas .zip/.pdf/.xml): ficam só na máquina
 importar/

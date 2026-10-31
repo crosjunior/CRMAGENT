@@ -22,12 +22,19 @@ export function carregarCertificado(pfxPath, senha) {
   if (!cert) throw new Error('O arquivo .pfx não contém certificado');
 
   const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+  // Cadeia (AC intermediárias) enviada no handshake depois do certificado do titular
+  const cadeiaPem = certs.filter((c) => c !== cert).map((c) => forge.pki.certificateToPem(c)).join('');
+  const privateKeyPem = forge.pki.privateKeyToPem(chave);
+  const certPem = forge.pki.certificateToPem(cert);
   const cn = cert.subject.getField('CN')?.value ?? '';
   return {
     pfx,
     senha,
-    privateKeyPem: forge.pki.privateKeyToPem(chave),
-    certPem: forge.pki.certificateToPem(cert),
+    privateKeyPem,
+    certPem,
+    // Para o mTLS: chave e certificados em PEM. O .pfx não vai direto ao TLS porque os A1 da ICP-Brasil
+    // costumam usar RC2/3DES, que o OpenSSL 3 do Node recusa ("Unsupported PKCS12 PFX data")
+    tls: { key: privateKeyPem, cert: certPem + cadeiaPem },
     certDerBase64: forge.util.encode64(certDer),
     titular: cn,
     // e-CNPJ ICP-Brasil: CN = "RAZAO SOCIAL:12345678000199"

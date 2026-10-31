@@ -28,7 +28,7 @@ function normalizarErros(json) {
 }
 
 export function criarClienteSefin({ baseUrl, cert, timeoutMs = 60_000, ca }) {
-  const agent = new https.Agent({ pfx: cert.pfx, passphrase: cert.senha, keepAlive: true, ...(ca ? { ca } : {}) });
+  const agent = new https.Agent({ ...cert.tls, keepAlive: true, ...(ca ? { ca } : {}) });
 
   function requisitar(metodo, caminho, corpo) {
     const url = new URL(baseUrl.replace(/\/$/, '') + caminho);

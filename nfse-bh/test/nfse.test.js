@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import https from 'node:https';
+import tlsNode from 'node:tls';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -197,6 +198,41 @@ test('cliente Sefin: POST /nfse com mTLS, gzip+base64 e leitura de erros', async
     assert.equal(recebido.url, '/SefinNacional/nfse');
     assert.equal(recebido.clientCert, 'EMPRESA TESTE LTDA:11222333000181');
     await assert.rejects(sefin.emitir('<DPS><vServ>1.00</vServ></DPS>'), (e) => e.erros[0].codigo === 'E0001' && !e.incerto);
+  } finally {
+    server.close();
+  }
+});
+
+test('certificado A1 legado (RC2-40/3DES, comum na ICP-Brasil) funciona no mTLS da Sefin e do ADN', async () => {
+  const LEGADO = path.join(DIR, 'fixtures', 'legado.pfx');
+  // O TLS do Node (OpenSSL 3) recusa este .pfx direto; a aplicação usa a chave e o certificado em PEM
+  assert.throws(() => tlsNode.createSecureContext({ pfx: fs.readFileSync(LEGADO), passphrase: '1234' }), /Unsupported PKCS12/);
+  const cert = carregarCertificado(LEGADO, '1234');
+  assert.equal(cert.cnpj, '11222333000181');
+
+  const tls = { key: fs.readFileSync(path.join(DIR, 'fixtures', 'servidor-key.pem')), cert: fs.readFileSync(path.join(DIR, 'fixtures', 'servidor-cert.pem')) };
+  const vistos = [];
+  const server = https.createServer({ ...tls, requestCert: true, rejectUnauthorized: false }, (req, res) => {
+    vistos.push([req.url, req.socket.getPeerCertificate()?.subject?.CN]);
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url.includes('/DFe/')) {
+      res.statusCode = 404;
+      return res.end(JSON.stringify({ StatusProcessamento: 'NENHUM_DOCUMENTO_LOCALIZADO', LoteDFe: [] }));
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `https://localhost:${server.address().port}`;
+  try {
+    const { criarClienteAdn } = await import('../src/adn.js');
+    // O ADN usa o agente com a CA padrão; aqui confiamos no certificado do servidor de teste
+    const adn = criarClienteAdn({ baseUrl: base, cert: { ...cert, tls: { ...cert.tls, ca: tls.cert } } });
+    const r = await adn.lote(0, '11222333000181');
+    assert.equal(r.docs.length, 0);
+    const sefin = criarClienteSefin({ baseUrl: base, cert, ca: tls.cert });
+    assert.equal(await sefin.consultarDps('DPS1'), null);
+    assert.deepEqual(vistos.map((v) => v[1]), ['EMPRESA LEGADO LTDA:11222333000181', 'EMPRESA LEGADO LTDA:11222333000181']);
   } finally {
     server.close();
   }
