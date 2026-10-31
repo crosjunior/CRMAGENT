@@ -15,6 +15,8 @@ import { criarClienteAdn, sincronizarAdn } from './adn.js';
 import { processarExtrato, confirmarLancamento } from './conciliacao.js';
 import { listarModelos, gerarMensagem, VARIAVEIS, MODELOS_PADRAO } from './mensagens.js';
 import { FREQUENCIAS, ocorrencias, emitirDaAgenda, executarVencidas } from './agenda.js';
+import { enriquecerFornecedores, resumoFornecedores, CATEGORIAS } from './fornecedores.js';
+import { iaDisponivel, extrairTextos, analisarComIA, analisarPorRegras, normalizarContrato, situacaoDoContrato, agendarParcelas } from './contratos.js';
 
 const erro400 = (msg) => Object.assign(new Error(msg), { statusHttp: 400 });
 
@@ -47,6 +49,9 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     proximoNDPS: store.dps.proximo(config.serie),
     certificado: emissor.statusCertificado(),
     ultimoNsuAdn: store.estado.obter('adn_ultimo_nsu', 0),
+    ultimaBuscaPortal: store.estado.obter('adn_ultima_busca', null),
+    proximaBuscaPortal: proximaBuscaPortal(store),
+    leituraContratosIA: iaDisponivel(),
   })));
 
   app.put('/api/emitente', rota((req) => {
@@ -146,13 +151,21 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     res.json(exportarPacote({ store }));
   });
 
-  app.post('/api/importar/adn', rota(async (req) => {
+  /** Busca no portal (ADN): emitidas e recebidas. Usada pelo botão em Config e pela rotina de 15 dias. */
+  async function buscarNoPortal({ ano, reiniciar, opcoes = {}, origem = 'manual' }) {
     const adn = criarClienteAdn({ baseUrl: config.adnUrl, cert: emissor.certificado() });
-    const { ano, reiniciar } = req.body ?? {};
     const { documentos, ultimoNsu } = await sincronizarAdn({ adn, store, cnpj: config.prestador.cnpj, reiniciar: !!reiniciar });
-    const r = importar({ documentos }, { ...(req.body?.opcoes ?? {}), ...(ano ? { ano } : {}) });
+    const r = importar({ documentos }, { ...opcoes, ...(ano ? { ano } : {}) });
     store.estado.definir('adn_ultimo_nsu', ultimoNsu);
-    return { ...r, documentos: documentos.length, ultimoNsu };
+    const resultado = { ...r, documentos: documentos.length, ultimoNsu };
+    store.estado.definir('adn_ultima_busca', { em: new Date().toISOString(), origem, notasNovas: r.notasNovas, recebidasNovas: r.recebidasNovas, erros: r.erros.length });
+    // Fornecedores novos ganham CNAE/classificação em segundo plano
+    enriquecerFornecedores({ store, consultar: consultarCnpj }).catch(() => {});
+    return resultado;
+  }
+  app.post('/api/importar/adn', rota(async (req) => {
+    const { ano, reiniciar, opcoes } = req.body ?? {};
+    return buscarNoPortal({ ano, reiniciar, opcoes });
   }));
 
   /**
@@ -218,6 +231,91 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
   }));
   app.get('/api/extrato', rota(() => store.lancamentos.listar().sort((a, b) => b.data.localeCompare(a.data))));
   app.post('/api/extrato/:id/conciliar', rota((req) => confirmarLancamento({ store, lancamentoId: req.params.id, notaId: req.body.notaId, recebidaId: req.body.recebidaId })));
+
+  // ---------- Contratos ----------
+  const comSituacaoContrato = (c) => situacaoDoContrato(c, { notas: store.notas.listar(), agendas: store.agendas.listar() });
+  app.get('/api/contratos', rota(() => store.contratos.listar().sort((a, b) => (b.criadoEm ?? '').localeCompare(a.criadoEm ?? '')).map(comSituacaoContrato)));
+
+  // Lê os documentos e devolve o rascunho para revisão (não grava nada)
+  app.post('/api/contratos/analisar', rota(async (req) => {
+    const { arquivos = [], texto = '' } = req.body;
+    if (!arquivos.length && !texto.trim()) throw erro400('Envie o contrato/proposta ou cole as informações');
+    const documentos = await extrairTextos(arquivos);
+    const empresa = { nome: config.prestador.razaoSocial, cnpj: config.prestador.cnpj };
+    const textoTotal = [...documentos.map((d) => d.texto), texto].join('\n\n');
+    let rascunho;
+    let metodo = 'regras';
+    let aviso = null;
+    if (iaDisponivel()) {
+      try {
+        rascunho = await analisarComIA({ documentos, textoLivre: texto, empresa });
+        metodo = 'ia';
+      } catch (e) {
+        aviso = `Leitura com IA indisponível (${e.message}); usada a leitura por regras.`;
+      }
+    }
+    rascunho ??= analisarPorRegras({ texto: textoTotal, empresa });
+    const cliente = rascunho.cliente?.documento ? store.clientes.porDocumento(rascunho.cliente.documento) : null;
+    return {
+      rascunho: normalizarContrato(rascunho, config),
+      metodo,
+      aviso,
+      clienteExistente: cliente ? { id: cliente.id, nome: cliente.nome } : null,
+      arquivos: documentos.map((d) => ({ nome: d.nome, caracteres: d.texto.length })),
+    };
+  }));
+
+  // Grava (novo ou edição). Cliente novo é cadastrado pelo CNPJ (dados da Receita quando disponíveis)
+  app.post('/api/contratos', rota(async (req) => {
+    const { arquivos = [], agendar = false, ...dados } = req.body;
+    const c = normalizarContrato(dados, config);
+    const doc = c.cliente.documento;
+    if (!(doc.length === 14 ? cnpjValido(doc) : doc.length === 11 && cpfValido(doc))) throw erro400('Informe o CNPJ/CPF do cliente (contratante)');
+    if (!c.parcelas.length) throw erro400('Informe ao menos uma parcela');
+    let cliente = store.clientes.porDocumento(doc);
+    if (!cliente) {
+      const receita = doc.length === 14 ? await consultarCnpj(doc).catch(() => null) : null;
+      cliente = store.clientes.salvar({ documento: doc, nome: c.cliente.nome || receita?.nome || 'Cliente', ...(receita ? { email: receita.email, fone: receita.fone, endereco: receita.endereco, nomeFantasia: receita.nomeFantasia } : {}), origem: 'contrato' });
+    }
+    const salvo = store.contratos.salvar({ ...c, id: c.id || undefined, clienteId: cliente.id, cliente: { documento: doc, nome: cliente.nome }, criadoEm: c.criadoEm ?? new Date().toISOString(), atualizadoEm: new Date().toISOString() });
+    // Arquivos originais ficam junto do contrato (data/contratos/<id>/)
+    for (const a of arquivos) {
+      const dir = path.join(config.dataDir, 'contratos', salvo.id);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, path.basename(a.nome)), Buffer.from(a.base64, 'base64'));
+    }
+    if (arquivos.length) store.contratos.salvar({ id: salvo.id, arquivos: [...new Set([...(salvo.arquivos ?? []), ...arquivos.map((a) => path.basename(a.nome))])] });
+    if (agendar) agendarParcelas({ store, contrato: store.contratos.obter(salvo.id) });
+    return comSituacaoContrato(store.contratos.obter(salvo.id));
+  }));
+  app.post('/api/contratos/:id/agendar', rota((req) => {
+    const c = store.contratos.obter(req.params.id);
+    if (!c) throw erro400('Contrato não encontrado');
+    return agendarParcelas({ store, contrato: c });
+  }));
+  app.delete('/api/contratos/:id', rota((req) => {
+    const c = store.contratos.obter(req.params.id);
+    if (!c) throw erro400('Contrato não encontrado');
+    // Agendamentos ainda não emitidos do contrato saem junto
+    for (const a of store.agendas.listar().filter((a) => a.contratoId === c.id && a.ativo)) store.agendas.remover(a.id);
+    store.contratos.remover(c.id);
+    return { ok: true };
+  }));
+  app.get('/api/contratos/:id/arquivo/:nome', (req, res) => {
+    const f = path.join(config.dataDir, 'contratos', req.params.id, path.basename(req.params.nome));
+    if (!fs.existsSync(f)) return res.status(404).json({ erro: 'Arquivo não encontrado' });
+    res.download(f);
+  });
+
+  // ---------- Fornecedores ----------
+  app.get('/api/fornecedores', rota((req) => resumoFornecedores({ store, ano: req.query.ano })));
+  app.patch('/api/fornecedores/:doc', rota((req) => {
+    const { categoria } = req.body;
+    if (categoria && !CATEGORIAS[categoria]) throw erro400('Categoria inválida');
+    // categoria vazia volta para a classificação automática
+    return store.fornecedores.salvar({ id: req.params.doc, documento: req.params.doc, categoriaManual: categoria || null });
+  }));
+  app.post('/api/fornecedores/enriquecer', rota(() => enriquecerFornecedores({ store, consultar: consultarCnpj })));
 
   // ---------- Notas recebidas (contas a pagar) ----------
   const recebidaComSituacao = (r) => ({ ...r, situacaoAtual: situacaoDaRecebida(r), valorAPagar: Number(r.valorLiquido ?? r.valor).toFixed(2) });
@@ -329,18 +427,44 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     return { proximo: n };
   }));
 
-  app.locals.ctx = { config, store, emissor, importarPasta };
+  app.locals.ctx = { config, store, emissor, importarPasta, buscarNoPortal };
   return app;
 }
 
 /** Verifica a agenda a cada 15 minutos e emite as notas automáticas vencidas. */
-export function iniciarAgendador({ config, store, emissor }, intervaloMs = 15 * 60_000) {
+export const INTERVALO_BUSCA_PORTAL_DIAS = 15;
+
+/** Data (ISO) em que a busca automática no portal volta a rodar. */
+export function proximaBuscaPortal(store) {
+  const ultima = store.estado.obter('adn_ultima_busca', null)?.em;
+  if (!ultima) return new Date().toISOString();
+  return new Date(new Date(ultima).getTime() + INTERVALO_BUSCA_PORTAL_DIAS * 864e5).toISOString();
+}
+
+export function iniciarAgendador({ config, store, emissor, buscarNoPortal }, intervaloMs = 15 * 60_000) {
   let rodando = false;
   const tick = async () => {
     if (rodando) return;
     rodando = true;
     try {
       await executarVencidas({ config, store, emissor });
+      // Busca automática no portal a cada 15 dias (só com certificado configurado)
+      if (buscarNoPortal && emissor.statusCertificado().ok && new Date(proximaBuscaPortal(store)) <= new Date()) {
+        const primeira = !store.estado.obter('adn_ultimo_nsu', 0);
+        try {
+          const r = await buscarNoPortal({
+            // Primeira vez: o ano corrente inteiro; depois, só o que entrou no portal desde a última leitura
+            ...(primeira ? { ano: String(new Date().getFullYear()), reiniciar: true } : {}),
+            opcoes: { pagasAteDias: 45 },
+            origem: 'automatica',
+          });
+          console.log(`[portal] busca automática: ${r.notasNovas} emitida(s) e ${r.recebidasNovas} recebida(s) nova(s)`);
+        } catch (e) {
+          // Registra a tentativa para não repetir a cada 15 minutos; tenta de novo no próximo ciclo
+          store.estado.definir('adn_ultima_busca', { em: new Date().toISOString(), origem: 'automatica', erro: e.message });
+          console.error(`[portal] busca automática falhou: ${e.message}`);
+        }
+      }
     } finally {
       rodando = false;
     }

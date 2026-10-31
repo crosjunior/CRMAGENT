@@ -83,6 +83,9 @@ export function criarStore(dataDir) {
       porChave: (chave) => colecao('recebidas').listar().find((n) => n.chaveAcesso === chave) ?? null,
     },
     agendas: colecao('agendas'),
+    // Dados extras do fornecedor (id = CNPJ): CNAE, porte e categoria escolhida pelo usuário
+    fornecedores: colecao('fornecedores'),
+    contratos: colecao('contratos'),
     modelos: colecao('modelos'),
     lancamentos: colecao('lancamentos'),
 

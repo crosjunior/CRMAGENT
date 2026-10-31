@@ -10,13 +10,17 @@ import Extrato from './pages/Extrato.jsx';
 import Config from './pages/Config.jsx';
 import Carregar from './pages/Carregar.jsx';
 import Recebidas from './pages/Recebidas.jsx';
+import Fornecedores from './pages/Fornecedores.jsx';
+import Contratos from './pages/Contratos.jsx';
 import { fmtDoc, fmtFone } from './lib.js';
 
 const ABAS = [
   ['emitir', 'Emitir'],
   ['notas', 'Notas'],
   ['recebidas', 'Recebidas'],
+  ['fornecedores', 'Fornecedores'],
   ['clientes', 'Clientes'],
+  ['contratos', 'Contratos'],
   ['agenda', 'Agenda'],
   ['mensagens', 'Mensagens'],
   ['extrato', 'Extrato'],
@@ -84,7 +88,9 @@ function App() {
         {aba === 'clientes' && <Clientes clientes={clientes} status={status} recarregar={recarregar} emitirPara={(id) => irPara('emitir', id)} />}
         {aba === 'agenda' && <Agenda clientes={clientes} recarregarTudo={recarregar} />}
         {aba === 'mensagens' && <Mensagens notas={notas} />}
-        {aba === 'recebidas' && <Recebidas recebidas={recebidas} status={status} recarregar={recarregar} />}
+        {aba === 'recebidas' && <Recebidas recebidas={recebidas} status={status} recarregar={recarregar} irPara={irPara} />}
+        {aba === 'fornecedores' && <Fornecedores />}
+        {aba === 'contratos' && <Contratos status={status} recarregarTudo={recarregar} />}
         {aba === 'extrato' && <Extrato notas={notas} recebidas={recebidas} recarregarTudo={recarregar} />}
         {aba === 'config' && <Config status={status} recarregar={recarregar} irPara={irPara} />}
       </main>

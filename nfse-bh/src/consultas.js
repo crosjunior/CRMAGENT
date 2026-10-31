@@ -30,6 +30,13 @@ export async function consultarCnpj(cnpj) {
     nome: j.razao_social,
     email: j.email ?? '',
     fone: soDigitos(j.ddd_telefone_1),
+    nomeFantasia: j.nome_fantasia ?? '',
+    cnae: j.cnae_fiscal ? String(j.cnae_fiscal) : '',
+    cnaeDescricao: j.cnae_fiscal_descricao ?? '',
+    cnaesSecundarios: (j.cnaes_secundarios ?? []).filter((c) => c.codigo).map((c) => ({ codigo: String(c.codigo), descricao: c.descricao })),
+    porte: j.porte ?? '',
+    simples: j.opcao_pelo_simples ?? null,
+    mei: j.opcao_pelo_mei ?? null,
     endereco: {
       cep: soDigitos(j.cep),
       logradouro: [j.descricao_tipo_de_logradouro, j.logradouro].filter(Boolean).join(' '),

@@ -89,6 +89,9 @@ export function importarPacote({ store, config, pacote }) {
     }
   }
 
+  for (const c of pacote.contratos ?? []) if (c.id && !store.contratos.obter(c.id)) store.contratos.salvar(c);
+  for (const f of pacote.fornecedores ?? []) if (f.id) store.fornecedores.salvar(f);
+
   for (const m of pacote.modelos ?? []) {
     if (m.nome && m.corpo) {
       store.modelos.salvar(m);
@@ -110,5 +113,7 @@ export function exportarPacote({ store }) {
     agendas: store.agendas.listar().map((a) => ({ ...a, clienteDocumento: docPorId.get(a.clienteId) })),
     modelos: store.modelos.listar(),
     recebidas: store.recebidas.listar(),
+    contratos: store.contratos.listar(),
+    fornecedores: store.fornecedores.listar(),
   };
 }

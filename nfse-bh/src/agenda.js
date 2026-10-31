@@ -61,6 +61,8 @@ export function pedidoDaAgenda({ agenda, config, store, hoje }) {
     clienteId: cliente.id,
     origem: 'agenda',
     agendaId: agenda.id,
+    // Parcela de contrato: o vencimento combinado com o cliente prevalece sobre a regra de prazo
+    ...(agenda.vencimentoPrevisto && agenda.vencimentoPrevisto >= hoje ? { vencimento: agenda.vencimentoPrevisto } : {}),
     servico: {
       descricao: renderizar(agenda.descricao, ctx),
       valor: agenda.valor,

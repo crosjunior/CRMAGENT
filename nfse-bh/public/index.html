@@ -147,6 +147,43 @@
     .previa-desc { margin: -6px 0 12px; font-size: 13.5px; color: var(--sub); }
     .previa-desc span { color: var(--txt); }
     .lista-erros { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; overflow-wrap: anywhere; }
+
+    /* --- fornecedores (gráficos de uma série) --- */
+    .grafico { margin: 0 0 8px; }
+    .grafico figcaption { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+    .barras { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; height: 150px; align-items: end; border-bottom: 1px solid var(--borda); padding-top: 22px; }
+    .coluna { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; outline: none; cursor: default; }
+    .coluna .barra { width: min(70%, 26px); background: var(--pri); border-radius: 4px 4px 0 0; min-height: 0; }
+    .coluna:hover .barra, .coluna:focus .barra { opacity: .8; }
+    .rotulo-x { position: absolute; bottom: -18px; font-size: 11px; color: var(--sub); }
+    .dica { position: absolute; top: -22px; white-space: nowrap; background: var(--txt); color: var(--bg); font-size: 11.5px; padding: 2px 6px; border-radius: 6px; z-index: 2; }
+    .barras + * { margin-top: 24px; }
+    .hbarras { list-style: none; margin: 0; padding: 0; }
+    .hbarras li { display: grid; grid-template-columns: minmax(90px, 38%) 1fr auto; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; }
+    .hrotulo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
+    .htrilho { height: 10px; }
+    .hbarra { display: block; height: 10px; background: var(--pri); border-radius: 0 4px 4px 0; min-width: 2px; }
+    .hvalor { font-variant-numeric: tabular-nums; }
+    .tab-forn .tr { grid-template-columns: 2.4fr 1.3fr 1fr .6fr 1fr 1fr; }
+    @media (max-width: 759px) { .tab-forn .tr { grid-template-columns: 1fr auto; } }
+    table.mini { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; display: block; overflow-x: auto; }
+    table.mini th, table.mini td { padding: 4px 6px; border-bottom: 1px solid var(--borda); text-align: right; white-space: nowrap; }
+    table.mini th { color: var(--sub); font-weight: 600; }
+    table.parcelas { display: table; }
+    table.parcelas th, table.parcelas td { text-align: left; white-space: normal; }
+    table.parcelas .num { text-align: right; }
+    .aviso-busca { margin: 0 0 12px; }
+    /* --- contratos --- */
+    .progresso { display: flex; height: 8px; background: var(--neutro-bg); border-radius: 99px; overflow: hidden; margin: 6px 0 4px; max-width: 520px; gap: 2px; }
+    .p-recebido { background: var(--ok); }
+    .p-faturado { background: #d9a400; }
+    .gerador { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13.5px; }
+    .gerador input, .gerador select { width: auto; padding: 7px 8px; }
+    .linha-parcela { display: grid; grid-template-columns: 48px 1.4fr auto auto 110px 1.2fr 28px; gap: 6px; align-items: end; padding: 6px 0; border-bottom: 1px solid var(--borda); }
+    .linha-parcela input { padding: 7px 8px; }
+    .linha-parcela label small { display: block; font-size: 11px; }
+    @media (max-width: 759px) { .linha-parcela { grid-template-columns: 48px 1fr 28px; } .linha-parcela .pd { grid-column: 2; } .linha-parcela label, .linha-parcela .pv, .linha-parcela .pr { grid-column: 1 / -1; } }
+    .link-arq { display: inline-block; margin-right: 10px; color: var(--pri); }
   </style>
 </head>
 <body>

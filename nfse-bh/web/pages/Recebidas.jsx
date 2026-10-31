@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { api, baixarCsv, fmtBRL, fmtData, fmtDoc, hoje } from '../lib.js';
 import { Badge, Campo, Kpi, Msg } from '../ui.jsx';
-import BuscarPortal from './BuscarPortal.jsx';
 
 const SITUACAO_R = {
   a_pagar: ['A pagar', 'alerta'],
@@ -12,7 +11,7 @@ const SITUACAO_R = {
 const FILTROS = [['abertas', 'A pagar'], ['vencida', 'Vencidas'], ['pago', 'Pagas'], ['cancelada', 'Canceladas'], ['todas', 'Todas']];
 
 /** Notas emitidas por fornecedores contra a empresa: controle de contas a pagar. */
-export default function Recebidas({ recebidas, status, recarregar }) {
+export default function Recebidas({ recebidas, status, recarregar, irPara }) {
   const [filtro, setFiltro] = useState('todas');
   const [mes, setMes] = useState('');
   const [busca, setBusca] = useState('');
@@ -59,7 +58,11 @@ export default function Recebidas({ recebidas, status, recarregar }) {
         <Kpi titulo="Recebidas no ano" valor={fmtBRL(kpis.ano)} />
       </div>
 
-      <BuscarPortal status={status} recarregar={recarregar} />
+      <p className="vazio aviso-busca">
+        As notas de fornecedores chegam pela busca automática no portal, a cada 15 dias
+        {status?.ultimaBuscaPortal?.em ? ` (última: ${fmtData(status.ultimaBuscaPortal.em)}, próxima: ${fmtData(status.proximaBuscaPortal)})` : ''}.{' '}
+        <button className="link" onClick={() => irPara('config')}>Buscar agora em Config</button>
+      </p>
 
       <div className="card">
         <h2>Notas recebidas de fornecedores</h2>
@@ -75,7 +78,7 @@ export default function Recebidas({ recebidas, status, recarregar }) {
           <button className="sec" onClick={exportar} disabled={!lista.length}>Exportar CSV</button>
         </div>
         {recebidas.length === 0 && (
-          <p className="vazio">Nenhuma nota recebida ainda. Use “Buscar notas” acima, ou envie os PDFs/XMLs em Config → Importar histórico: notas em que a empresa é tomadora entram aqui automaticamente.</p>
+          <p className="vazio">Nenhuma nota recebida ainda. A busca no portal roda a cada 15 dias (ou em Config → Buscar notas), ou envie os PDFs/XMLs em Config → Importar histórico: notas em que a empresa é tomadora entram aqui automaticamente.</p>
         )}
         <div className="tabela">
           {lista.length > 0 && (

@@ -63,7 +63,13 @@ export default function BuscarPortal({ status, recarregar, compacto }) {
           {r.erros.length > 10 && `… e mais ${r.erros.length - 10}.`} O XML deles fica em data\xml (arquivos erro-*.xml).
         </Msg>
       )}
-      {status?.ultimoNsuAdn ? <p className="vazio">Última leitura até o documento NSU {status.ultimoNsuAdn}.</p> : null}
+      <p className="vazio">
+        Busca automática a cada 15 dias com a aplicação aberta
+        {status?.ultimaBuscaPortal?.em
+          ? ` · última em ${new Date(status.ultimaBuscaPortal.em).toLocaleString('pt-BR')} (${status.ultimaBuscaPortal.origem === 'automatica' ? 'automática' : 'manual'}${status.ultimaBuscaPortal.erro ? `, falhou: ${status.ultimaBuscaPortal.erro}` : ''})`
+          : ' · ainda não executada'}
+        {status?.proximaBuscaPortal ? ` · próxima: ${new Date(status.proximaBuscaPortal).toLocaleDateString('pt-BR')}` : ''}.
+      </p>
     </div>
   );
 }
