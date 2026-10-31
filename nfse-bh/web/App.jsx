@@ -9,11 +9,13 @@ import Mensagens from './pages/Mensagens.jsx';
 import Extrato from './pages/Extrato.jsx';
 import Config from './pages/Config.jsx';
 import Carregar from './pages/Carregar.jsx';
+import Recebidas from './pages/Recebidas.jsx';
 import { fmtDoc, fmtFone } from './lib.js';
 
 const ABAS = [
   ['emitir', 'Emitir'],
   ['notas', 'Notas'],
+  ['recebidas', 'Recebidas'],
   ['clientes', 'Clientes'],
   ['agenda', 'Agenda'],
   ['mensagens', 'Mensagens'],
@@ -28,6 +30,7 @@ function App() {
   const [status, setStatus] = useState(null);
   const [clientes, setClientes] = useState([]);
   const [notas, setNotas] = useState([]);
+  const [recebidas, setRecebidas] = useState([]);
   const [tema, setTema] = useState(() => {
     try { return localStorage.getItem('tema') || ''; } catch { return ''; }
   });
@@ -36,6 +39,7 @@ function App() {
     api('/api/status').then(setStatus).catch(() => {});
     api('/api/clientes').then(setClientes).catch(() => {});
     api('/api/notas').then(setNotas).catch(() => {});
+    api('/api/recebidas').then(setRecebidas).catch(() => {});
   };
   useEffect(recarregar, []);
   useEffect(() => {
@@ -52,6 +56,7 @@ function App() {
   }
 
   const atrasadas = notas.filter((n) => n.situacaoAtual === 'atrasada').length;
+  const vencidas = recebidas.filter((r) => r.situacaoAtual === 'vencida').length;
   return (
     <>
       <header>
@@ -66,6 +71,7 @@ function App() {
         {ABAS.map(([k, t]) => (
           <button key={k} className={aba === k ? 'ativo' : ''} onClick={() => irPara(k)}>
             {t}{k === 'notas' && atrasadas > 0 && <span className="ponto">{atrasadas}</span>}
+            {k === 'recebidas' && vencidas > 0 && <span className="ponto">{vencidas}</span>}
           </button>
         ))}
       </nav>
@@ -78,7 +84,8 @@ function App() {
         {aba === 'clientes' && <Clientes clientes={clientes} status={status} recarregar={recarregar} emitirPara={(id) => irPara('emitir', id)} />}
         {aba === 'agenda' && <Agenda clientes={clientes} recarregarTudo={recarregar} />}
         {aba === 'mensagens' && <Mensagens notas={notas} />}
-        {aba === 'extrato' && <Extrato notas={notas} recarregarTudo={recarregar} />}
+        {aba === 'recebidas' && <Recebidas recebidas={recebidas} status={status} recarregar={recarregar} />}
+        {aba === 'extrato' && <Extrato notas={notas} recebidas={recebidas} recarregarTudo={recarregar} />}
         {aba === 'config' && <Config status={status} recarregar={recarregar} irPara={irPara} />}
       </main>
     </>

@@ -77,6 +77,11 @@ export function criarStore(dataDir) {
       porChave: (chave) => notasBase.listar().find((n) => n.chaveAcesso === chave) ?? null,
     },
 
+    // Notas emitidas contra a empresa (fornecedores): contas a pagar
+    recebidas: {
+      ...colecao('recebidas'),
+      porChave: (chave) => colecao('recebidas').listar().find((n) => n.chaveAcesso === chave) ?? null,
+    },
     agendas: colecao('agendas'),
     modelos: colecao('modelos'),
     lancamentos: colecao('lancamentos'),

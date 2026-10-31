@@ -37,6 +37,13 @@ export function situacaoDaNota(nota, hoje = hojeBR()) {
   return s;
 }
 
+/** Situação de uma nota recebida (conta a pagar): a_pagar | vencida | pago | cancelada. */
+export function situacaoDaRecebida(r, hoje = hojeBR()) {
+  const s = r.situacao ?? 'a_pagar';
+  if (s === 'a_pagar' && r.vencimento && r.vencimento < hoje) return 'vencida';
+  return s;
+}
+
 /** Valor que o cliente deve depositar: o líquido quando há retenção (ISS retido pelo tomador). */
 export const valorEsperado = (n) => Number(n.valorLiquido ?? n.valor);
 

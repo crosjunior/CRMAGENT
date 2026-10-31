@@ -7,7 +7,7 @@ import { carregarConfig, aplicarEmitente, CAMPOS_EMITENTE } from './config.js';
 import { criarStore } from './store.js';
 import { criarEmissor } from './emissor.js';
 import { consultarCep, consultarCnpj } from './consultas.js';
-import { camposDaBaixa, situacaoDaNota, hojeBR, valorEsperado } from './financeiro.js';
+import { camposDaBaixa, situacaoDaNota, situacaoDaRecebida, hojeBR, valorEsperado } from './financeiro.js';
 import { extrairArquivos, lerArquivos, resolverLocais, importarDocumentos, sugerirAgendas } from './importacao.js';
 import { importarPacote, exportarPacote } from './pacote.js';
 import { cnpjValido, cpfValido } from './dps.js';
@@ -148,8 +148,9 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
 
   app.post('/api/importar/adn', rota(async (req) => {
     const adn = criarClienteAdn({ baseUrl: config.adnUrl, cert: emissor.certificado() });
-    const { documentos, ultimoNsu } = await sincronizarAdn({ adn, store, cnpj: config.prestador.cnpj });
-    const r = importar({ documentos }, req.body?.opcoes);
+    const { ano, reiniciar } = req.body ?? {};
+    const { documentos, ultimoNsu } = await sincronizarAdn({ adn, store, cnpj: config.prestador.cnpj, reiniciar: !!reiniciar });
+    const r = importar({ documentos }, { ...(req.body?.opcoes ?? {}), ...(ano ? { ano } : {}) });
     store.estado.definir('adn_ultimo_nsu', ultimoNsu);
     return { ...r, documentos: documentos.length, ultimoNsu };
   }));
@@ -216,7 +217,35 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     return processarExtrato({ store, texto: conteudo, nome });
   }));
   app.get('/api/extrato', rota(() => store.lancamentos.listar().sort((a, b) => b.data.localeCompare(a.data))));
-  app.post('/api/extrato/:id/conciliar', rota((req) => confirmarLancamento({ store, lancamentoId: req.params.id, notaId: req.body.notaId })));
+  app.post('/api/extrato/:id/conciliar', rota((req) => confirmarLancamento({ store, lancamentoId: req.params.id, notaId: req.body.notaId, recebidaId: req.body.recebidaId })));
+
+  // ---------- Notas recebidas (contas a pagar) ----------
+  const recebidaComSituacao = (r) => ({ ...r, situacaoAtual: situacaoDaRecebida(r), valorAPagar: Number(r.valorLiquido ?? r.valor).toFixed(2) });
+  app.get('/api/recebidas', rota(() => store.recebidas.listar().sort((a, b) => b.dataEmissao.localeCompare(a.dataEmissao)).map(recebidaComSituacao)));
+  app.patch('/api/recebidas/:id', rota((req) => {
+    const r = store.recebidas.obter(req.params.id);
+    if (!r) throw erro400('Nota recebida não encontrada');
+    const { baixa, observacoes, vencimento } = req.body;
+    const campos = {};
+    if (baixa) {
+      if (!['a_pagar', 'pago', 'cancelada'].includes(baixa.tipo)) throw erro400('Tipo de baixa inválido');
+      Object.assign(campos, {
+        situacao: baixa.tipo,
+        dataPagamento: baixa.tipo === 'pago' ? baixa.dataPagamento || hojeBR() : null,
+        valorPago: baixa.tipo === 'pago' ? Number(baixa.valorPago ?? r.valorLiquido ?? r.valor).toFixed(2) : null,
+        baixa: baixa.tipo === 'a_pagar' ? null : { origem: 'manual', em: new Date().toISOString() },
+      });
+    }
+    if (observacoes !== undefined) campos.observacoes = String(observacoes);
+    if (vencimento !== undefined) campos.vencimento = vencimento || null;
+    return recebidaComSituacao(store.recebidas.salvar({ id: r.id, ...campos }));
+  }));
+  app.get('/api/recebidas/:id/arquivo/:tipo', (req, res) => {
+    const r = store.recebidas.obter(req.params.id);
+    const nome = { xml: r?.nfseXml, pdf: r?.danfsePdf }[req.params.tipo];
+    if (!nome || !fs.existsSync(store.xml.caminho(nome))) return res.status(404).json({ erro: 'Arquivo não disponível' });
+    res.download(store.xml.caminho(nome), nome);
+  });
   app.post('/api/extrato/:id/ignorar', rota((req) => store.lancamentos.salvar({ id: req.params.id, status: 'ignorado' })));
 
   // ---------- Modelos de mensagem ----------

@@ -395,7 +395,79 @@ test('pacote: clientes pelo CNPJ (sem duplicar), notas sem chave e agenda; reimp
   assert.equal(completa.length, 1);
   assert.equal(completa[0].numero, '140');
 
+  // A mesma NFS-e vinda de outra fonte com chave diferente não duplica (número + cliente + data)
+  const copia = nfseXml({ numero: 140, data: '2026-10-02', tomador: ACME, valor: '26900', descricao: 'Formação', chave: chave(941) });
+  assert.equal(importarDocumentos({ store, config: cfg, documentos: [{ nome: 'c.xml', xml: copia }] }).notasNovas, 0);
+
   const backup = exportarPacote({ store });
   assert.equal(backup.agendas[0].clienteDocumento, ACME.documento);
   assert.equal(backup.notas.length, 2);
+});
+
+// NFS-e emitida por um fornecedor para a Conexão Ágil (tomadora)
+function nfseRecebidaXml({ numero, data, fornecedor, valor, descricao, chave, retido = false }) {
+  const vLiq = (Number(valor) * (retido ? 0.95 : 1)).toFixed(2);
+  return `<?xml version="1.0" encoding="UTF-8"?><NFSe xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infNFSe Id="NFS${chave}">
+<nNFSe>${numero}</nNFSe><dhProc>${data}T09:00:00-03:00</dhProc>
+<emit><CNPJ>${fornecedor.documento}</CNPJ><xNome>${fornecedor.nome}</xNome><enderNac><xLgr>Rua A</xLgr><nro>1</nro><xBairro>Centro</xBairro><cMun>3550308</cMun><UF>SP</UF><CEP>01001000</CEP></enderNac><email>nf@fornecedor.com</email></emit>
+<valores><vLiq>${vLiq}</vLiq></valores>
+<DPS versao="1.01"><infDPS Id="DPS1"><tpAmb>1</tpAmb><dhEmi>${data}T09:00:00-03:00</dhEmi><serie>1</serie><nDPS>${numero}</nDPS><dCompet>${data}</dCompet>
+<prest><CNPJ>${fornecedor.documento}</CNPJ></prest><toma><CNPJ>29978652000187</CNPJ><xNome>CONEXAO AGIL SOLUCOES EMPRESARIAIS LTDA</xNome></toma>
+<serv><cServ><cTribNac>010701</cTribNac><xDescServ>${descricao}</xDescServ></cServ></serv>
+<valores><vServPrest><vServ>${valor}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>${retido ? 2 : 1}</tpRetISSQN></tribMun></trib></valores></infDPS></DPS></infNFSe></NFSe>`;
+}
+const FORNECEDOR = { documento: '45723174000110', nome: 'NUVEM SOFTWARE LTDA' };
+const chaveF = (n) => `355030822${'45723174000110'}${String(n).padStart(13, '0')}2601123456789`;
+
+test('notas recebidas (empresa tomadora) entram em contas a pagar; filtro por ano', () => {
+  const store = novoStore();
+  const cfg = config();
+  const docs = [
+    { nome: 'r1', xml: nfseRecebidaXml({ numero: 1, data: '2026-03-10', fornecedor: FORNECEDOR, valor: '350', descricao: 'Licença SaaS', chave: chaveF(1) }) },
+    { nome: 'r2', xml: nfseRecebidaXml({ numero: 2, data: '2026-10-10', fornecedor: FORNECEDOR, valor: '1000', descricao: 'Consultoria', chave: chaveF(2), retido: true }) },
+    { nome: 'r0', xml: nfseRecebidaXml({ numero: 9, data: '2025-12-20', fornecedor: FORNECEDOR, valor: '99', descricao: 'Ano passado', chave: chaveF(9) }) },
+    { nome: 'e1', xml: nfseXml({ numero: 50, data: '2026-10-01', tomador: ACME, valor: '1860', descricao: 'Mentoria', chave: chave(50) }) },
+  ];
+  const r = importarDocumentos({ store, config: cfg, documentos: docs, opcoes: { ano: 2026 } });
+  assert.deepEqual([r.notasNovas, r.recebidasNovas, r.foraDoPeriodo, r.ignorados], [1, 2, 1, 0]);
+  assert.equal(store.clientes.listar().length, 1); // fornecedor não vira cliente
+  const r2 = store.recebidas.porChave(chaveF(2));
+  assert.deepEqual([r2.fornecedor.nome, r2.valor, r2.valorLiquido, r2.issRetido, r2.situacao], ['NUVEM SOFTWARE LTDA', '1000.00', '950.00', true, 'a_pagar']);
+
+  // Reimportar não duplica; cancelamento do fornecedor é aplicado
+  const ev = `<evento xmlns="http://www.sped.fazenda.gov.br/nfse"><infEvento><pedRegEvento><infPedReg><chNFSe>${chaveF(1)}</chNFSe><e101101/></infPedReg></pedRegEvento></infEvento></evento>`;
+  const again = importarDocumentos({ store, config: cfg, documentos: [...docs, { nome: 'ev', xml: ev }], opcoes: { ano: 2026 } });
+  assert.deepEqual([again.recebidasNovas, again.recebidasExistentes, again.eventos], [0, 2, 1]);
+  assert.equal(store.recebidas.porChave(chaveF(1)).situacao, 'cancelada');
+});
+
+test('ADN: busca completa (reiniciar) traz emitidas e recebidas por NSU', async () => {
+  const store = novoStore();
+  store.estado.definir('adn_ultimo_nsu', 500);
+  const lotes = {
+    0: [{ nsu: 1, tipo: 'NFSE', xml: nfseXml({ numero: 60, data: '2026-02-01', tomador: ACME, valor: '100', descricao: 'x', chave: chave(60) }) },
+        { nsu: 2, tipo: 'NFSE', xml: nfseRecebidaXml({ numero: 3, data: '2026-02-05', fornecedor: FORNECEDOR, valor: '200', descricao: 'y', chave: chaveF(3) }) }],
+    2: [{ nsu: 3, tipo: 'DPS', xml: '<DPS/>' }],
+    3: [],
+  };
+  const pedidos = [];
+  const adn = { lote: async (nsu) => (pedidos.push(nsu), { docs: lotes[nsu] ?? [], erros: [] }) };
+  const { sincronizarAdn } = await import('../src/adn.js');
+  const s = await sincronizarAdn({ adn, store, cnpj: '29978652000187', reiniciar: true });
+  assert.deepEqual(pedidos, [0, 2, 3]);
+  assert.equal(s.ultimoNsu, 3);
+  assert.equal(s.documentos.length, 2); // DPS é ignorada
+  const r = importarDocumentos({ store, config: config(), documentos: s.documentos, opcoes: { ano: '2026' } });
+  assert.deepEqual([r.notasNovas, r.recebidasNovas], [1, 1]);
+});
+
+test('extrato: débito com nome do fornecedor dá baixa na nota recebida', () => {
+  const store = novoStore();
+  importarDocumentos({ store, config: config(), documentos: [{ nome: 'r', xml: nfseRecebidaXml({ numero: 2, data: '2026-10-10', fornecedor: FORNECEDOR, valor: '1000', descricao: 'Consultoria', chave: chaveF(2), retido: true }) }] });
+  const ofx = '<OFX><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261020<TRNAMT>-950.00<FITID>d1<MEMO>PIX ENVIADO NUVEM SOFTWARE</STMTTRN><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261021<TRNAMT>-12.90<FITID>d2<MEMO>TARIFA</STMTTRN></OFX>';
+  const r = processarExtrato({ store, texto: ofx, nome: 'x.ofx' });
+  assert.equal(r.pagas.length, 1);
+  const paga = store.recebidas.porChave(chaveF(2));
+  assert.deepEqual([paga.situacao, paga.dataPagamento, paga.valorPago], ['pago', '2026-10-20', '950.00']);
+  assert.equal(store.lancamentos.listar().length, 1); // a tarifa não é guardada
 });

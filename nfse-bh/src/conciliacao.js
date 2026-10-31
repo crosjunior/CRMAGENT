@@ -1,7 +1,7 @@
 // Conciliação bancária: lê o extrato (OFX, CSV ou TXT), encontra os créditos que pagam notas em aberto
 // (valor + nome/documento do cliente) e dá baixa automática quando o casamento é inequívoco.
 import crypto from 'node:crypto';
-import { camposDaBaixa, situacaoDaNota, valorEsperado } from './financeiro.js';
+import { camposDaBaixa, situacaoDaNota, situacaoDaRecebida, valorEsperado } from './financeiro.js';
 
 const soDigitos = (s) => String(s ?? '').replace(/\D/g, '');
 
@@ -218,6 +218,32 @@ function somarDias(data, dias) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Débitos que pagam notas recebidas (fornecedores): mesmo critério dos créditos — valor (líquido ou bruto)
+ * e nome/CNPJ do fornecedor na descrição. Débito sem nota candidata não é guardado (tarifas, compras etc.).
+ */
+export function conciliarPagamentos({ lancamentos, recebidas }) {
+  const abertas = recebidas.filter((r) => ['a_pagar', 'vencida'].includes(situacaoDaRecebida(r)));
+  const usadas = new Set();
+  const resultado = [];
+  for (const l of [...lancamentos].filter((x) => x.valor < 0).sort((a, b) => a.data.localeCompare(b.data))) {
+    const valor = -l.valor;
+    const candidatos = abertas
+      .filter((r) => !usadas.has(r.id))
+      .filter((r) => Math.abs(Number(r.valorLiquido ?? r.valor) - valor) < 0.01 || Math.abs(Number(r.valor) - valor) < 0.01)
+      .filter((r) => !r.dataEmissao || l.data >= somarDias(r.dataEmissao, -5))
+      .map((r) => ({ recebida: r, score: semelhancaNome(l.descricao, r.fornecedor ?? {}) }))
+      .sort((a, b) => b.score - a.score || a.recebida.dataEmissao.localeCompare(b.recebida.dataEmissao));
+    if (!candidatos.length) continue;
+    const [melhor, segundo] = candidatos;
+    if (melhor.score >= 0.5 && (!segundo || segundo.score < melhor.score || segundo.recebida.dataEmissao > melhor.recebida.dataEmissao)) {
+      usadas.add(melhor.recebida.id);
+      resultado.push({ lancamento: l, tipo: 'automatico', recebida: melhor.recebida, candidatos });
+    } else resultado.push({ lancamento: l, tipo: 'sugestao', candidatos });
+  }
+  return resultado;
+}
+
 /** Processa um extrato: registra os lançamentos novos e dá baixa nas notas casadas automaticamente. */
 export function processarExtrato({ store, texto, nome }) {
   const lidos = lerExtrato(texto, nome);
@@ -247,21 +273,46 @@ export function processarExtrato({ store, texto, nome }) {
       baixadas.push({ notaId: c.nota.id, cliente: c.nota.tomador.nome, numero: c.nota.numero, valor: c.lancamento.valor, data: c.lancamento.data });
     }
   }
-  // Débitos não interessam à conciliação; não são guardados
+  // Pagamentos a fornecedores (débitos) contra as notas recebidas
+  const pagas = [];
+  for (const c of conciliarPagamentos({ lancamentos: novos, recebidas: store.recebidas.listar() })) {
+    const id = crypto.randomUUID();
+    registros.push({
+      ...c.lancamento,
+      id,
+      arquivo: nome,
+      importadoEm: new Date().toISOString(),
+      alvo: 'recebida',
+      recebidaId: c.tipo === 'automatico' ? c.recebida.id : null,
+      status: c.tipo === 'automatico' ? 'conciliado' : 'pendente',
+      sugestoes: c.tipo === 'sugestao' ? c.candidatos.slice(0, 5).map((x) => ({ recebidaId: x.recebida.id, score: Number(x.score.toFixed(2)) })) : [],
+    });
+    if (c.tipo === 'automatico') {
+      store.recebidas.salvar({ id: c.recebida.id, situacao: 'pago', dataPagamento: c.lancamento.data, valorPago: (-c.lancamento.valor).toFixed(2), baixa: { origem: 'extrato', lancamentoId: id } });
+      pagas.push({ recebidaId: c.recebida.id, fornecedor: c.recebida.fornecedor?.nome, numero: c.recebida.numero, valor: -c.lancamento.valor, data: c.lancamento.data });
+    }
+  }
   if (registros.length) store.lancamentos.salvarVarios(registros);
   return {
     lidos: lidos.length,
     creditos: lidos.filter((l) => l.valor > 0).length,
     jaImportados: lidos.length - novos.length,
     baixadas,
+    pagas,
     sugestoes: registros.filter((r) => r.status === 'pendente').length,
     semNota: registros.filter((r) => r.status === 'sem_nota').length,
   };
 }
 
 /** Confirma manualmente o casamento de um lançamento com uma nota. */
-export function confirmarLancamento({ store, lancamentoId, notaId }) {
+export function confirmarLancamento({ store, lancamentoId, notaId, recebidaId }) {
   const l = store.lancamentos.obter(lancamentoId);
+  if (recebidaId) {
+    const r = store.recebidas.obter(recebidaId);
+    if (!l || !r) throw Object.assign(new Error('Lançamento ou nota recebida não encontrado'), { statusHttp: 400 });
+    store.recebidas.salvar({ id: r.id, situacao: 'pago', dataPagamento: l.data, valorPago: Math.abs(l.valor).toFixed(2), baixa: { origem: 'extrato', lancamentoId: l.id } });
+    return store.lancamentos.salvar({ id: l.id, recebidaId: r.id, status: 'conciliado' });
+  }
   const n = store.notas.obter(notaId);
   if (!l || !n) throw Object.assign(new Error('Lançamento ou nota não encontrado'), { statusHttp: 400 });
   store.notas.salvar({ id: n.id, ...camposDaBaixa(n, { tipo: 'pago', dataPagamento: l.data, valorPago: l.valor, origem: 'extrato', lancamentoId: l.id }) });

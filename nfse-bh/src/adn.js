@@ -46,8 +46,9 @@ export function criarClienteAdn({ baseUrl, cert, timeoutMs = 60_000 }) {
 }
 
 /** Busca tudo desde o último NSU guardado, até esgotar (com limite de lotes por chamada). */
-export async function sincronizarAdn({ adn, store, cnpj, maxLotes = 40 }) {
-  let nsu = store.estado.obter('adn_ultimo_nsu', 0);
+export async function sincronizarAdn({ adn, store, cnpj, reiniciar = false, maxLotes = 400 }) {
+  // reiniciar: relê desde o primeiro documento (necessário para buscar um ano inteiro)
+  let nsu = reiniciar ? 0 : store.estado.obter('adn_ultimo_nsu', 0);
   const documentos = [];
   for (let i = 0; i < maxLotes; i++) {
     const { docs, erros } = await adn.lote(nsu, cnpj);

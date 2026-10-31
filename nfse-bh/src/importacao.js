@@ -199,7 +199,10 @@ export function limparDescricao(d) {
  * opcoes.pagasAteDias: notas emitidas há mais de N dias entram como pagas (histórico antigo).
  */
 export function importarDocumentos({ store, config, documentos = [], lidos: jaLidos, erros = [], opcoes = {} }) {
-  const resumo = { notasNovas: 0, notasExistentes: 0, eventos: 0, ignorados: 0, erros: [...erros], clientes: new Set(), emitente: null };
+  const resumo = {
+    notasNovas: 0, notasExistentes: 0, recebidasNovas: 0, recebidasExistentes: 0, foraDoPeriodo: 0,
+    eventos: 0, ignorados: 0, erros: [...erros], clientes: new Set(), emitente: null,
+  };
   const lidos = jaLidos ? [...jaLidos] : [];
   for (const d of documentos) {
     try {
@@ -218,9 +221,19 @@ export function importarDocumentos({ store, config, documentos = [], lidos: jaLi
   const rodape = (config.servicoPadrao.descricaoRodape ?? '').trim();
   const semRodape = (d) => (rodape && d.trim().endsWith(rodape) ? d.trim().slice(0, -rodape.length).trim() : d);
 
+  // Matriz e filiais têm a mesma raiz de CNPJ (8 dígitos)
+  const raiz = config.prestador.cnpj.slice(0, 8);
+  const daEmpresa = (doc) => doc?.length === 14 && doc.slice(0, 8) === raiz;
+  const novasRecebidas = [];
+
   for (const n of nfses) {
-    if (n.prestador?.documento !== config.prestador.cnpj) {
-      resumo.ignorados++; // nota recebida (sou tomador) ou de outro prestador
+    if (opcoes.ano && !String(n.dataEmissao).startsWith(String(opcoes.ano))) {
+      resumo.foraDoPeriodo++;
+      continue;
+    }
+    if (!daEmpresa(n.prestador?.documento)) {
+      if (daEmpresa(n.tomador?.documento)) registrarRecebida(n);
+      else resumo.ignorados++; // nem prestadora nem tomadora (ex.: intermediária)
       continue;
     }
     resumo.emitente ??= n.prestador;
@@ -250,7 +263,10 @@ export function importarDocumentos({ store, config, documentos = [], lidos: jaLi
 
     if (n.xml) store.xml.salvar(`${n.chaveAcesso}-nfse.xml`, n.xml);
     if (n.pdf) store.xml.salvar(`${n.chaveAcesso}-danfse.pdf`, n.pdf);
-    const chaveExistente = store.notas.porChave(n.chaveAcesso);
+    // Mesma nota: mesma chave ou, se a chave divergir (cópia de outra fonte), mesmo número, cliente e data
+    const chaveExistente =
+      store.notas.porChave(n.chaveAcesso) ??
+      store.notas.listar().find((x) => x.numero && String(x.numero) === String(n.numero) && x.tomador?.documento === cliente.documento && x.dataEmissao === n.dataEmissao);
     if (chaveExistente) {
       // Já cadastrada (ex.: veio de um pacote): só anexa o XML/PDF que faltava
       const anexos = {};
@@ -311,9 +327,63 @@ export function importarDocumentos({ store, config, documentos = [], lidos: jaLi
     resumo.notasNovas++;
   }
   if (novasNotas.length) store.notas.salvarVarios(novasNotas);
+  if (novasRecebidas.length) store.recebidas.salvarVarios(novasRecebidas);
+
+  /** Nota que um fornecedor emitiu para a empresa: entra em contas a pagar. */
+  function registrarRecebida(n) {
+    const mesma = (r) => r.chaveAcesso === n.chaveAcesso || (r.numero && String(r.numero) === String(n.numero) && r.fornecedor?.documento === n.prestador?.documento && r.dataEmissao === n.dataEmissao);
+    const existente = store.recebidas.listar().find(mesma) ?? novasRecebidas.find(mesma);
+    if (n.xml) store.xml.salvar(`${n.chaveAcesso}-nfse.xml`, n.xml);
+    if (n.pdf) store.xml.salvar(`${n.chaveAcesso}-danfse.pdf`, n.pdf);
+    if (existente) {
+      const anexos = {};
+      if (n.xml && !existente.nfseXml) anexos.nfseXml = `${n.chaveAcesso}-nfse.xml`;
+      if (n.pdf && !existente.danfsePdf) anexos.danfsePdf = `${n.chaveAcesso}-danfse.pdf`;
+      if (Object.keys(anexos).length && existente.id) store.recebidas.salvar({ id: existente.id, ...anexos });
+      resumo.recebidasExistentes++;
+      return;
+    }
+    const antiga = limitePago && n.dataEmissao <= limitePago;
+    const p = n.prestador ?? {};
+    novasRecebidas.push({
+      id: crypto.randomUUID(),
+      criadaEm: new Date().toISOString(),
+      origem: n.pdf ? 'pdf' : 'xml',
+      chaveAcesso: n.chaveAcesso,
+      numero: n.numero,
+      dataEmissao: n.dataEmissao,
+      competencia: n.competencia,
+      ambiente: n.ambiente,
+      fornecedor: {
+        documento: p.documento, nome: p.nome, nomeFantasia: p.nomeFantasia, email: p.email, fone: p.fone,
+        municipio: p.endereco?.municipio ?? '', uf: p.endereco?.uf ?? '',
+      },
+      tomadorDocumento: n.tomador?.documento,
+      descricao: n.descricao,
+      cTribNac: n.cTribNac,
+      valor: n.valor,
+      // Com ISS retido a empresa paga o líquido ao fornecedor e recolhe o ISS
+      valorLiquido: n.valorLiquido ?? n.valor,
+      issRetido: n.issRetido,
+      valorIss: n.valorIss,
+      situacao: n.cancelada ? 'cancelada' : antiga ? 'pago' : 'a_pagar',
+      vencimento: null,
+      dataPagamento: null,
+      observacoes: antiga ? 'Importada como paga (histórico anterior ao sistema).' : '',
+      nfseXml: n.xml ? `${n.chaveAcesso}-nfse.xml` : null,
+      danfsePdf: n.pdf ? `${n.chaveAcesso}-danfse.pdf` : null,
+    });
+    resumo.recebidasNovas++;
+  }
 
   // Eventos depois das notas: o cancelamento pode vir no mesmo lote
   for (const ev of lidos.filter((l) => l.tipo === 'evento')) {
+    const recebida = store.recebidas.porChave(ev.chaveAcesso);
+    if (recebida) {
+      store.recebidas.salvar({ id: recebida.id, situacao: 'cancelada', observacoes: [recebida.observacoes, `Cancelada pelo fornecedor (evento importado em ${hoje}).`].filter(Boolean).join(' ') });
+      resumo.eventos++;
+      continue;
+    }
     const nota = store.notas.porChave(ev.chaveAcesso);
     if (!nota) continue;
     store.notas.salvar({

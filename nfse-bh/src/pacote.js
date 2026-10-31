@@ -82,6 +82,13 @@ export function importarPacote({ store, config, pacote }) {
     r.agendas++;
   }
 
+  for (const n of pacote.recebidas ?? []) {
+    if (n.chaveAcesso && !store.recebidas.porChave(n.chaveAcesso)) {
+      store.recebidas.salvar({ ...n, id: undefined });
+      r.recebidas = (r.recebidas ?? 0) + 1;
+    }
+  }
+
   for (const m of pacote.modelos ?? []) {
     if (m.nome && m.corpo) {
       store.modelos.salvar(m);
@@ -102,5 +109,6 @@ export function exportarPacote({ store }) {
     notas: store.notas.listar().map((n) => ({ ...n, clienteDocumento: docPorId.get(n.clienteId) ?? n.tomador?.documento })),
     agendas: store.agendas.listar().map((a) => ({ ...a, clienteDocumento: docPorId.get(a.clienteId) })),
     modelos: store.modelos.listar(),
+    recebidas: store.recebidas.listar(),
   };
 }

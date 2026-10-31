@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, fmtBRL, fmtData, lerArquivoTexto } from '../lib.js';
 import { Msg } from '../ui.jsx';
 
-export default function Extrato({ notas, recarregarTudo }) {
+export default function Extrato({ notas, recebidas = [], recarregarTudo }) {
   const [lancamentos, setLancamentos] = useState([]);
   const [resultado, setResultado] = useState(null);
   const [erro, setErro] = useState('');
@@ -18,12 +18,13 @@ export default function Extrato({ notas, recarregarTudo }) {
     if (!arquivos.length) return;
     setOcupado(true);
     setErro('');
-    const total = { lidos: 0, creditos: 0, jaImportados: 0, baixadas: [], sugestoes: 0, semNota: 0 };
+    const total = { lidos: 0, creditos: 0, jaImportados: 0, baixadas: [], pagas: [], sugestoes: 0, semNota: 0 };
     try {
       for (const f of arquivos) {
         const r = await api('/api/extrato', { method: 'POST', body: { nome: f.name, conteudo: await lerArquivoTexto(f) } });
         for (const k of ['lidos', 'creditos', 'jaImportados', 'sugestoes', 'semNota']) total[k] += r[k];
         total.baixadas.push(...r.baixadas);
+        total.pagas.push(...(r.pagas ?? []));
       }
       setResultado(total);
       setAba(total.sugestoes ? 'pendente' : 'conciliado');
@@ -36,8 +37,9 @@ export default function Extrato({ notas, recarregarTudo }) {
     }
   }
 
-  async function conciliar(l, notaId) {
-    await api(`/api/extrato/${l.id}/conciliar`, { method: 'POST', body: { notaId } });
+  async function conciliar(l, id) {
+    const body = l.alvo === 'recebida' ? { recebidaId: id } : { notaId: id };
+    await api(`/api/extrato/${l.id}/conciliar`, { method: 'POST', body });
     carregar();
     recarregarTudo();
   }
@@ -48,6 +50,8 @@ export default function Extrato({ notas, recarregarTudo }) {
 
   const porId = Object.fromEntries(notas.map((n) => [n.id, n]));
   const abertas = notas.filter((n) => ['aguardando', 'atrasada'].includes(n.situacaoAtual));
+  const recPorId = Object.fromEntries(recebidas.map((r) => [r.id, r]));
+  const recAbertas = recebidas.filter((r) => ['a_pagar', 'vencida'].includes(r.situacaoAtual));
   const filtrados = lancamentos.filter((l) => (aba === 'pendente' ? ['pendente', 'sem_nota'].includes(l.status) : l.status === aba));
   const cont = (s) => lancamentos.filter((l) => (s === 'pendente' ? ['pendente', 'sem_nota'].includes(l.status) : l.status === s)).length;
 
@@ -56,7 +60,7 @@ export default function Extrato({ notas, recarregarTudo }) {
       <div className="card">
         <h2>Conciliação bancária</h2>
         <p className="vazio">
-          Importe o extrato (OFX, CSV ou TXT). Cada crédito é comparado com as notas em aberto pelo <strong>valor</strong> (bruto ou líquido, se houver
+          Importe o extrato (OFX, CSV ou TXT). Créditos pagam notas emitidas; débitos pagam notas recebidas de fornecedores. Cada lançamento é comparado com as notas em aberto pelo <strong>valor</strong> (bruto ou líquido, se houver
           ISS retido) e pelo <strong>nome ou CNPJ</strong> do cliente. Casamentos certos já dão baixa; os demais ficam para você confirmar.
         </p>
         <label className={`pri btn upload ${ocupado ? 'desab' : ''}`}>
@@ -66,13 +70,16 @@ export default function Extrato({ notas, recarregarTudo }) {
         <Msg tipo="erro">{erro}</Msg>
         {resultado && (
           <div className="caixa">
-            <strong>{resultado.baixadas.length} nota(s) baixada(s) automaticamente</strong>
+            <strong>{resultado.baixadas.length} nota(s) emitida(s) recebida(s) e {resultado.pagas.length} nota(s) de fornecedor paga(s) — baixa automática</strong>
             <small className="vazio">
               {resultado.lidos} lançamentos lidos · {resultado.creditos} créditos · {resultado.jaImportados} já importados antes · {resultado.sugestoes} para confirmar · {resultado.semNota} sem nota correspondente
             </small>
             <ul className="lista compacta">
               {resultado.baixadas.map((b) => (
                 <li key={b.notaId}><span className="flex1">{b.cliente} {b.numero ? `· NFS-e ${b.numero}` : ''}</span><span>{fmtData(b.data)}</span><strong>{fmtBRL(b.valor)}</strong></li>
+              ))}
+              {resultado.pagas.map((b) => (
+                <li key={b.recebidaId}><span className="flex1">Pago a {b.fornecedor} {b.numero ? `· NFS-e ${b.numero}` : ''}</span><span>{fmtData(b.data)}</span><strong>−{fmtBRL(b.valor)}</strong></li>
               ))}
             </ul>
           </div>
@@ -95,8 +102,23 @@ export default function Extrato({ notas, recarregarTudo }) {
                   <small>{l.descricao}</small>
                 </div>
                 {l.status === 'conciliado' && porId[l.notaId] && <small>→ {porId[l.notaId].tomador?.nome} {porId[l.notaId].numero ? `· NFS-e ${porId[l.notaId].numero}` : ''}</small>}
+                {l.status === 'conciliado' && recPorId[l.recebidaId] && <small>→ pagamento a {recPorId[l.recebidaId].fornecedor?.nome} {recPorId[l.recebidaId].numero ? `· NFS-e ${recPorId[l.recebidaId].numero}` : ''}</small>}
               </div>
-              {['pendente', 'sem_nota'].includes(l.status) && (
+              {['pendente', 'sem_nota'].includes(l.status) && l.alvo === 'recebida' && (
+                <div className="acoes esq">
+                  {(l.sugestoes ?? []).map((s) => recPorId[s.recebidaId] && ['a_pagar', 'vencida'].includes(recPorId[s.recebidaId].situacaoAtual) && (
+                    <button key={s.recebidaId} className="sec" onClick={() => conciliar(l, s.recebidaId)}>
+                      ✓ Pagamento a {recPorId[s.recebidaId].fornecedor?.nome} · {recPorId[s.recebidaId].numero ?? 's/nº'}
+                    </button>
+                  ))}
+                  <select defaultValue="" onChange={(e) => e.target.value && conciliar(l, e.target.value)} className="sel-curto">
+                    <option value="">Escolher nota de fornecedor…</option>
+                    {recAbertas.map((r) => <option key={r.id} value={r.id}>{r.fornecedor?.nome} · {r.numero ?? 's/nº'} · {fmtBRL(r.valorAPagar)}</option>)}
+                  </select>
+                  <button className="sec" onClick={() => ignorar(l)}>Não é nota</button>
+                </div>
+              )}
+              {['pendente', 'sem_nota'].includes(l.status) && l.alvo !== 'recebida' && (
                 <div className="acoes esq">
                   {(l.sugestoes ?? []).map((s) => porId[s.notaId] && ['aguardando', 'atrasada'].includes(porId[s.notaId].situacaoAtual) && (
                     <button key={s.notaId} className="sec" onClick={() => conciliar(l, s.notaId)}>

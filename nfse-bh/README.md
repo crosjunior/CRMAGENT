@@ -26,10 +26,24 @@ Cliente + descrição + valor
 | **Emitir** | Escolhe o cliente (descrição, valor, código de serviço e ISS retido vêm do cadastro dele), confere e emite |
 | **Notas** | Controle financeiro: aguardando pagamento, em atraso, pago, cancelada, substituída; datas de envio, vencimento e pagamento; baixa manual; observações por nota; mensagem pronta; exportação CSV |
 | **Clientes** | Cadastro com configurações por cliente: código de serviço, ISS retido e alíquota, descrição/valor padrão, prazo ou dia fixo de vencimento, contato, e-mails de cobrança, WhatsApp, modelo de mensagem, nomes alternativos no extrato |
+| **Recebidas** | Notas emitidas por fornecedores contra a empresa (contas a pagar): a pagar, vencida, paga, cancelada; ISS retido a recolher; baixa manual ou pelo extrato |
 | **Agenda** | Emissões planejadas por data ou frequência (semanal a anual), em modo *lembrete* (um clique) ou *automático*; calendário de 90 dias; sugestões a partir do histórico |
 | **Mensagens** | Modelos de texto com variáveis (`{{cliente.contato}}`, `{{nota.valorAPagar}}`, `{{nota.vencimento}}`, `{{pix}}`…) e prévia com dados reais; envio por e-mail, WhatsApp ou cópia |
 | **Extrato** | Importa OFX, CSV ou TXT do banco e dá baixa automática casando valor (bruto ou líquido) com nome/CNPJ do cliente; casos ambíguos ficam para confirmar |
 | **Config** | Importação do histórico (XML/ZIP do portal ou sincronização pelo ADN), dados do emitente, serviço padrão, dados bancários, numeração |
+
+### Buscar todas as notas no portal (emitidas e recebidas)
+
+Em **Recebidas** (ou Config) → **Buscar notas de 2026**: com o certificado A1, a aplicação lê no Ambiente de Dados
+Nacional (ADN) todos os documentos em que a empresa aparece e separa:
+- notas em que a Conexão Ágil é **prestadora** → **Notas** (e o cliente é cadastrado/atualizado);
+- notas em que é **tomadora** (fornecedores) → **Recebidas**;
+- cancelamentos → aplicados nas duas listas.
+
+A busca de um ano relê o histórico desde o primeiro documento e guarda só o ano escolhido; notas já existentes
+(mesma chave, ou mesmo número + cliente + data) não são duplicadas. A consulta é só leitura e usa o ADN de
+produção mesmo com `NFSE_AMBIENTE=homologacao`. Notas de municípios que não compartilham com o ADN não aparecem —
+envie o PDF/XML delas manualmente.
 
 ### Primeira carga dos dados
 

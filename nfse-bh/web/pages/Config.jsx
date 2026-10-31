@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, fmtData, fmtDoc, lerArquivoBase64, lerArquivoTexto, soDigitos } from '../lib.js';
 import { Campo, Msg } from '../ui.jsx';
+import BuscarPortal from './BuscarPortal.jsx';
 
 export default function Config({ status, recarregar, irPara }) {
   if (!status) return null;
@@ -59,15 +60,11 @@ function Importar({ status, recarregar, irPara }) {
           {ocupado === 'arquivos' ? 'Importando…' : 'Enviar notas (PDF, XML ou ZIP)'}
           <input type="file" accept=".xml,.zip,.pdf" multiple hidden onChange={arquivos} disabled={!!ocupado} />
         </label>
-        <button className="sec" disabled={!!ocupado || !status.certificado.ok}
-          onClick={() => rodar('adn', () => api('/api/importar/adn', { method: 'POST', body: { opcoes: opcoes() } }))}>
-          {ocupado === 'adn' ? 'Sincronizando…' : 'Sincronizar com o portal (ADN)'}
-        </button>
       </div>
       <p className="vazio">
-        Aceita o PDF (DANFSe) ou o XML baixados do portal Emissor Nacional, soltos ou em ZIP. Ou use a sincronização, que baixa tudo direto do Ambiente
-        Nacional com o seu certificado {status.ultimoNsuAdn ? `(último NSU ${status.ultimoNsuAdn})` : ''}.
+        Aceita o PDF (DANFSe) ou o XML baixados do portal Emissor Nacional, soltos ou em ZIP. Notas em que a Conexão Ágil é tomadora vão para Recebidas.
       </p>
+      <BuscarPortal status={status} recarregar={recarregar} compacto />
       <h3 className="secao">Pacote de dados e backup</h3>
       <p className="vazio">O pacote (.json) traz emitente, clientes, notas e agenda de uma vez — para restaurar um backup ou carregar dados preparados. Clientes são casados pelo CNPJ: nunca duplicam.</p>
       <div className="acoes esq">

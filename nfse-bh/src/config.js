@@ -74,7 +74,8 @@ export function carregarConfig() {
       conta: env('COBRANCA_CONTA', ''),
       pix: env('COBRANCA_PIX', ''),
     },
-    adnUrl: env('NFSE_ADN_URL', ambiente === 'producao' ? 'https://adn.nfse.gov.br/contribuintes' : 'https://adn.producaorestrita.nfse.gov.br/contribuintes'),
+    // A busca no ADN só lê documentos: usa a produção (onde estão as notas reais) mesmo em homologação
+    adnUrl: env('NFSE_ADN_URL', 'https://adn.nfse.gov.br/contribuintes'),
     serie: env('NFSE_SERIE', '1'),
     verAplic: 'nfse-bh 2.0',
   };
