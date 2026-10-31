@@ -12,7 +12,7 @@ import { extrairArquivos, lerArquivos, resolverLocais, importarDocumentos, suger
 import { importarPacote, exportarPacote } from './pacote.js';
 import { cnpjValido, cpfValido } from './dps.js';
 import { criarClienteAdn, sincronizarAdn } from './adn.js';
-import { processarExtrato, confirmarLancamento } from './conciliacao.js';
+import { processarExtrato, confirmarLancamento, ignorarLancamento, reabrirLancamento, reprocessarPendentes, pesquisarNotas, lerAprendizado, removerRegra } from './conciliacao.js';
 import { listarModelos, gerarMensagem, VARIAVEIS, MODELOS_PADRAO } from './mensagens.js';
 import { FREQUENCIAS, ocorrencias, emitirDaAgenda, executarVencidas } from './agenda.js';
 import { enriquecerFornecedores, resumoFornecedores, CATEGORIAS } from './fornecedores.js';
@@ -206,6 +206,8 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
 
   function importar(entrada, opcoes) {
     const r = importarDocumentos({ store, config, ...entrada, opcoes });
+    // Notas novas podem resolver créditos do extrato que estavam a conferir
+    r.conciliacao = reprocessarPendentes({ store });
     // Completa o emitente com o que veio da nota (só os campos ainda vazios)
     if (r.emitente) {
       const e = r.emitente;
@@ -231,6 +233,12 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
   }));
   app.get('/api/extrato', rota(() => store.lancamentos.listar().sort((a, b) => b.data.localeCompare(a.data))));
   app.post('/api/extrato/:id/conciliar', rota((req) => confirmarLancamento({ store, lancamentoId: req.params.id, notaId: req.body.notaId, recebidaId: req.body.recebidaId })));
+  app.post('/api/extrato/:id/ignorar', rota((req) => ignorarLancamento({ store, lancamentoId: req.params.id, aprenderRegra: req.body?.aprender !== false })));
+  app.post('/api/extrato/:id/reabrir', rota((req) => reabrirLancamento({ store, lancamentoId: req.params.id })));
+  app.get('/api/extrato/:id/notas', rota((req) => pesquisarNotas({ store, lancamentoId: req.params.id, mes: req.query.mes, q: req.query.q })));
+  app.post('/api/extrato/reprocessar', rota(() => reprocessarPendentes({ store })));
+  app.get('/api/extrato/regras', rota(() => lerAprendizado(store)));
+  app.delete('/api/extrato/regras/:tipo/:i', rota((req) => removerRegra(store, req.params.tipo, req.params.i)));
 
   // ---------- Contratos ----------
   const comSituacaoContrato = (c) => situacaoDoContrato(c, { notas: store.notas.listar(), agendas: store.agendas.listar() });
@@ -344,7 +352,6 @@ export function criarApp({ config = carregarConfig(), store, emissor } = {}) {
     if (!nome || !fs.existsSync(store.xml.caminho(nome))) return res.status(404).json({ erro: 'Arquivo não disponível' });
     res.download(store.xml.caminho(nome), nome);
   });
-  app.post('/api/extrato/:id/ignorar', rota((req) => store.lancamentos.salvar({ id: req.params.id, status: 'ignorado' })));
 
   // ---------- Modelos de mensagem ----------
   app.get('/api/modelos', rota(() => ({ modelos: listarModelos(store), variaveis: VARIAVEIS })));
@@ -482,6 +489,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const p = (carga.pacotes ?? []).reduce((s, x) => ({ c: s.c + x.clientesNovos, n: s.n + x.notasNovas, a: s.a + x.agendas }), { c: 0, n: 0, a: 0 });
     console.log(`Pasta importar/: ${carga.arquivos?.length ?? 0} arquivo(s) — ${p.c} cliente(s) novo(s), ${p.n + (carga.notas?.notasNovas ?? 0)} nota(s), ${p.a} agendamento(s)`);
     for (const e of carga.erros ?? []) console.log(`  erro: ${e}`);
+  }
+  // Extratos já importados: aplica as regras atuais (linhas de saldo, regras aprendidas, notas novas)
+  try {
+    const rp = reprocessarPendentes({ store: app.locals.ctx.store });
+    if (rp.conciliados.length || rp.ignorados) console.log(`Extrato: ${rp.conciliados.length} conciliado(s), ${rp.ignorados} ignorado(s) ao reavaliar`);
+  } catch (e) {
+    console.log(`Extrato: falha ao reavaliar — ${e.message}`);
   }
   iniciarAgendador(app.locals.ctx);
   app.listen(config.porta, '127.0.0.1', () => {

@@ -85,11 +85,21 @@ configurável) entram como pagas; as recentes, como "aguardando pagamento", para
 
 ### Baixa automática pelo extrato
 
-Para cada crédito do extrato, a aplicação procura notas em aberto com o mesmo valor (bruto ou líquido, quando
-há ISS retido), emitidas até 5 dias depois do pagamento ou antes dele, e compara a descrição do lançamento com o nome, nome
-fantasia, nomes alternativos ou CNPJ do cliente. Valor + nome/CNPJ conferindo, com um único candidato → baixa
-automática. Valor conferindo sem nome, ou mais de um candidato → fica em "A conferir". Reimportar o mesmo
-extrato não duplica baixas.
+Cada crédito é comparado com as notas em aberto (e com as que a importação do histórico marcou como pagas sem
+data de pagamento) por **CNPJ** (com ou sem pontuação, ou só a raiz), **nome** (razão social, fantasia, apelidos),
+**valor** (bruto, líquido de ISS retido, ou líquido de retenções até 15%) e **data** (emitida até 75 dias antes).
+
+- Cliente (CNPJ/nome/regra aprendida) + valor exato → baixa automática (havendo duas iguais, paga a mais antiga).
+- CNPJ + valor com retenção, e é a única nota em aberto do cliente no período → baixa automática.
+- Caso contrário fica em "A conferir" com as **notas relacionadas** e os motivos (CNPJ, nome, valor, período).
+  Dá para pesquisar notas de outros meses (mês anterior, meses antes, todos) ou **importar o PDF/XML** da nota
+  que faltava — ao importar, os pendentes são reavaliados e a baixa sai sozinha se casar.
+- Linhas de saldo ("SALDO TOTAL DISPONÍVEL", "SALDO ANTERIOR"…) são ignoradas sempre.
+
+**Aprendizado:** ao ligar um lançamento a uma nota, a descrição passa a identificar aquele cliente; ao marcar
+"Não é nota", lançamentos com a mesma descrição passam a ser ignorados. As regras valem para os próximos
+extratos e para os pendentes atuais, ficam em `data/estado.json` e podem ser vistas/esquecidas na própria tela.
+"Desfazer" reverte a baixa e esquece a regra. Reimportar o mesmo extrato não duplica baixas.
 
 ### Descrição com variáveis
 
@@ -156,6 +166,9 @@ Pede confirmação antes de enviar; `--sim` confirma direto (uso em scripts), `-
 | `GET/POST/DELETE` | `/api/clientes` | cadastro de tomadores |
 | `POST` | `/api/importar/arquivos` · `/api/importar/adn` | importação do histórico |
 | `POST` | `/api/extrato` | conciliação bancária (`{ nome, conteudo }`) |
+| `GET` | `/api/extrato/:id/notas?mes=&q=` | pesquisa notas para um lançamento (outros meses, cliente, nº) |
+| `POST` | `/api/extrato/:id/conciliar` · `/ignorar` · `/reabrir` | ligar (aprende), "não é nota" (aprende), desfazer |
+| `GET`/`DELETE` | `/api/extrato/regras` | regras aprendidas |
 | `GET/POST` | `/api/agendas` · `/api/modelos` | planejamento e modelos de mensagem |
 
 ```json

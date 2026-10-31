@@ -186,7 +186,9 @@ test('conciliação: nome/documento + valor dão baixa automática; ambíguo vir
   assert.equal(porValor['4850|2026-10-15'].nota.id, 'n2');
   assert.equal(porValor['700|2026-10-16'].tipo, 'sugestao');
   assert.equal(porValor['700|2026-10-16'].candidatos.length, 2);
-  assert.equal(porValor['999|2026-10-16'].tipo, 'sem_nota');
+  // Valor não bate, mas o nome sim: as notas do cliente aparecem como relacionadas, sem baixa automática
+  assert.equal(porValor['999|2026-10-16'].tipo, 'sugestao');
+  assert.ok(porValor['999|2026-10-16'].candidatos.every((c) => c.nota.clienteId === 'a'));
   assert.equal(porValor['1860|2026-09-01'].tipo, 'sem_nota');
 });
 
