@@ -50,6 +50,12 @@ function pessoa(no) {
   };
 }
 
+function valorDoXml(s) {
+  const n = Number(s || 0);
+  if (!Number.isFinite(n)) throw new Error(`valor do serviço ilegível: ${s}`);
+  return n.toFixed(2);
+}
+
 /** Lê o XML de uma NFS-e (ou de um evento de cancelamento) e devolve os dados relevantes. */
 export function lerDocumentoFiscal(xml) {
   const doc = new DOMParser({ onError: () => {} }).parseFromString(xml, 'text/xml');
@@ -72,7 +78,8 @@ export function lerDocumentoFiscal(xml) {
   const dhProc = texto(filho(inf, 'dhProc'));
   const chave = (inf.getAttribute('Id') || '').replace(/^NFS/, '');
   const prestador = pessoa(filho(inf, 'emit'));
-  const tomador = pessoa(filho(infDps, 'toma'));
+  // O tomador fica em infDPS/toma; a busca em qualquer nível cobre variações de leiaute
+  const tomador = pessoa(filho(infDps, 'toma') ?? descendente(inf, 'toma'));
 
   return {
     tipo: 'nfse',
@@ -90,7 +97,7 @@ export function lerDocumentoFiscal(xml) {
     cTribMun: texto(filho(cServ, 'cTribMun')),
     cNBS: texto(filho(cServ, 'cNBS')),
     cLocPrestacao: texto(caminho(infDps, 'serv', 'locPrest', 'cLocPrestacao')),
-    valor: Number(texto(caminho(infDps, 'valores', 'vServPrest', 'vServ')) || 0).toFixed(2),
+    valor: valorDoXml(texto(caminho(infDps, 'valores', 'vServPrest', 'vServ'))),
     valorLiquido: texto(caminho(inf, 'valores', 'vLiq')) || null,
     valorIss: texto(caminho(inf, 'valores', 'vISSQN')) || null,
     issRetido: texto(filho(tribMun, 'tpRetISSQN')) === '2',
@@ -226,105 +233,121 @@ export function importarDocumentos({ store, config, documentos = [], lidos: jaLi
   const daEmpresa = (doc) => doc?.length === 14 && doc.slice(0, 8) === raiz;
   const novasRecebidas = [];
 
+  // Cada nota é tratada isoladamente: um documento fora do padrão não interrompe a importação das demais
+  const comProblema = [];
   for (const n of nfses) {
-    if (opcoes.ano && !String(n.dataEmissao).startsWith(String(opcoes.ano))) {
-      resumo.foraDoPeriodo++;
-      continue;
+    try {
+      processarNota(n);
+    } catch (e) {
+      comProblema.push(n);
+      resumo.erros.push(`NFS-e ${n.numero || '?'} de ${n.dataEmissao || '?'} (chave ${n.chaveAcesso || '?'}): ${e.message}`);
     }
-    if (!daEmpresa(n.prestador?.documento)) {
-      if (daEmpresa(n.tomador?.documento)) registrarRecebida(n);
-      else resumo.ignorados++; // nem prestadora nem tomadora (ex.: intermediária)
-      continue;
-    }
-    resumo.emitente ??= n.prestador;
-    // Cliente: a nota mais recente define as configurações (as notas estão em ordem cronológica)
-    const existente = store.clientes.porDocumento(n.tomador.documento);
-    const enderecoValido = n.tomador.endereco?.cep ? n.tomador.endereco : existente?.endereco;
-    const cliente = store.clientes.salvar({
-      ...(existente ?? {}),
-      documento: n.tomador.documento,
-      nome: n.tomador.nome || existente?.nome,
-      email: existente?.email || n.tomador.email,
-      fone: existente?.fone || n.tomador.fone,
-      im: existente?.im || n.tomador.im,
-      endereco: enderecoValido ?? null,
-      cTribNac: n.cTribNac !== config.servicoPadrao.cTribNac ? n.cTribNac : existente?.cTribNac ?? '',
-      cTribMun: n.cTribMun && n.cTribMun !== config.servicoPadrao.cTribMun ? n.cTribMun : existente?.cTribMun ?? '',
-      issRetido: n.issRetido,
-      aliquotaIss: n.issRetido ? n.aliquotaIss : existente?.aliquotaIss ?? '',
-      cNBS: n.cNBS || '',
-      cLocPrestacao: n.cLocPrestacao && n.cLocPrestacao !== config.servicoPadrao.cLocPrestacao ? n.cLocPrestacao : n.cLocPrestacao ? '' : existente?.cLocPrestacao ?? '',
-      localPrestacao: n.localPrestacao?.municipio ? `${n.localPrestacao.municipio}/${n.localPrestacao.uf}` : existente?.localPrestacao ?? '',
-      descricaoPadrao: limparDescricao(semRodape(n.descricao)),
-      valorPadrao: n.valor,
-      origem: existente?.origem ?? 'importacao',
-    });
-    resumo.clientes.add(cliente.id);
+  }
+  // Guarda o XML das notas com problema para diagnóstico (data/xml/erros)
+  for (const n of comProblema) if (n.xml) store.xml.salvar(`erro-${n.chaveAcesso || crypto.randomUUID()}.xml`, n.xml);
 
-    if (n.xml) store.xml.salvar(`${n.chaveAcesso}-nfse.xml`, n.xml);
-    if (n.pdf) store.xml.salvar(`${n.chaveAcesso}-danfse.pdf`, n.pdf);
-    // Mesma nota: mesma chave ou, se a chave divergir (cópia de outra fonte), mesmo número, cliente e data
-    const chaveExistente =
-      store.notas.porChave(n.chaveAcesso) ??
-      store.notas.listar().find((x) => x.numero && String(x.numero) === String(n.numero) && x.tomador?.documento === cliente.documento && x.dataEmissao === n.dataEmissao);
-    if (chaveExistente) {
-      // Já cadastrada (ex.: veio de um pacote): só anexa o XML/PDF que faltava
-      const anexos = {};
-      if (n.xml && !chaveExistente.nfseXml) anexos.nfseXml = `${n.chaveAcesso}-nfse.xml`;
-      if (n.pdf && !chaveExistente.danfsePdf) anexos.danfsePdf = `${n.chaveAcesso}-danfse.pdf`;
-      if (Object.keys(anexos).length) store.notas.salvar({ id: chaveExistente.id, ...anexos });
-      resumo.notasExistentes++;
-      continue;
-    }
-    // Nota lançada antes sem chave (ex.: copiada da listagem do portal): completa em vez de duplicar
-    const semChave = store.notas
-      .listar()
-      .find((x) => !x.chaveAcesso && x.tomador?.documento === cliente.documento && x.dataEmissao === n.dataEmissao && Number(x.valor) === Number(n.valor));
-    if (semChave) {
-      store.notas.salvar({
-        id: semChave.id,
+  function processarNota(n) {
+      if (opcoes.ano && !String(n.dataEmissao).startsWith(String(opcoes.ano))) {
+        resumo.foraDoPeriodo++;
+        return;
+      }
+      if (!daEmpresa(n.prestador?.documento)) {
+        if (daEmpresa(n.tomador?.documento)) registrarRecebida(n);
+        else resumo.ignorados++; // nem prestadora nem tomadora (ex.: intermediária)
+        return;
+      }
+      resumo.emitente ??= n.prestador;
+      // Cliente: a nota mais recente define as configurações (as notas estão em ordem cronológica)
+      // Nota sem tomador identificado (ex.: consumidor final): entra no histórico sem cadastrar cliente
+      const semTomador = !n.tomador?.documento;
+      n.tomador ??= {};
+      const existente = semTomador ? null : store.clientes.porDocumento(n.tomador.documento);
+      const enderecoValido = n.tomador.endereco?.cep ? n.tomador.endereco : existente?.endereco;
+      const cliente = semTomador ? { id: null, documento: '', nome: n.tomador.nome || 'Tomador não identificado', email: '' } : store.clientes.salvar({
+        ...(existente ?? {}),
+        documento: n.tomador.documento,
+        nome: n.tomador.nome || existente?.nome,
+        email: existente?.email || n.tomador.email,
+        fone: existente?.fone || n.tomador.fone,
+        im: existente?.im || n.tomador.im,
+        endereco: enderecoValido ?? null,
+        cTribNac: n.cTribNac !== config.servicoPadrao.cTribNac ? n.cTribNac : existente?.cTribNac ?? '',
+        cTribMun: n.cTribMun && n.cTribMun !== config.servicoPadrao.cTribMun ? n.cTribMun : existente?.cTribMun ?? '',
+        issRetido: n.issRetido,
+        aliquotaIss: n.issRetido ? n.aliquotaIss : existente?.aliquotaIss ?? '',
+        cNBS: n.cNBS || '',
+        cLocPrestacao: n.cLocPrestacao && n.cLocPrestacao !== config.servicoPadrao.cLocPrestacao ? n.cLocPrestacao : n.cLocPrestacao ? '' : existente?.cLocPrestacao ?? '',
+        localPrestacao: n.localPrestacao?.municipio ? `${n.localPrestacao.municipio}/${n.localPrestacao.uf}` : existente?.localPrestacao ?? '',
+        descricaoPadrao: limparDescricao(semRodape(n.descricao)),
+        valorPadrao: n.valor,
+        origem: existente?.origem ?? 'importacao',
+      });
+      if (cliente.id) resumo.clientes.add(cliente.id);
+
+      if (n.xml) store.xml.salvar(`${n.chaveAcesso}-nfse.xml`, n.xml);
+      if (n.pdf) store.xml.salvar(`${n.chaveAcesso}-danfse.pdf`, n.pdf);
+      // Mesma nota: mesma chave ou, se a chave divergir (cópia de outra fonte), mesmo número, cliente e data
+      const chaveExistente =
+        store.notas.porChave(n.chaveAcesso) ??
+        store.notas.listar().find((x) => x.numero && String(x.numero) === String(n.numero) && x.tomador?.documento === cliente.documento && x.dataEmissao === n.dataEmissao);
+      if (chaveExistente) {
+        // Já cadastrada (ex.: veio de um pacote): só anexa o XML/PDF que faltava
+        const anexos = {};
+        if (n.xml && !chaveExistente.nfseXml) anexos.nfseXml = `${n.chaveAcesso}-nfse.xml`;
+        if (n.pdf && !chaveExistente.danfsePdf) anexos.danfsePdf = `${n.chaveAcesso}-danfse.pdf`;
+        if (Object.keys(anexos).length) store.notas.salvar({ id: chaveExistente.id, ...anexos });
+        resumo.notasExistentes++;
+        return;
+      }
+      // Nota lançada antes sem chave (ex.: copiada da listagem do portal): completa em vez de duplicar
+      const semChave = store.notas
+        .listar()
+        .find((x) => !x.chaveAcesso && x.tomador?.documento === cliente.documento && x.dataEmissao === n.dataEmissao && Number(x.valor) === Number(n.valor));
+      if (semChave) {
+        store.notas.salvar({
+          id: semChave.id,
+          chaveAcesso: n.chaveAcesso,
+          numero: n.numero,
+          nDPS: n.nDPS,
+          serie: n.serie,
+          competencia: n.competencia,
+          descricao: n.descricao,
+          nfseXml: n.xml ? `${n.chaveAcesso}-nfse.xml` : semChave.nfseXml ?? null,
+          danfsePdf: n.pdf ? `${n.chaveAcesso}-danfse.pdf` : semChave.danfsePdf ?? null,
+        });
+        resumo.notasExistentes++;
+        return;
+      }
+      const antiga = limitePago && n.dataEmissao <= limitePago;
+      novasNotas.push({
+        id: crypto.randomUUID(),
+        criadaEm: new Date().toISOString(),
+        origem: 'importacao',
+        status: 'autorizada',
+        ambiente: n.ambiente,
+        serie: n.serie,
+        nDPS: n.nDPS,
         chaveAcesso: n.chaveAcesso,
         numero: n.numero,
-        nDPS: n.nDPS,
-        serie: n.serie,
+        dataEmissao: n.dataEmissao,
         competencia: n.competencia,
+        valor: n.valor,
+        valorLiquido: n.valorLiquido ?? n.valor,
+        valorIss: n.valorIss,
+        issRetido: n.issRetido,
         descricao: n.descricao,
-        nfseXml: n.xml ? `${n.chaveAcesso}-nfse.xml` : semChave.nfseXml ?? null,
-        danfsePdf: n.pdf ? `${n.chaveAcesso}-danfse.pdf` : semChave.danfsePdf ?? null,
+        tomador: { documento: cliente.documento, nome: cliente.nome, email: cliente.email ?? '' },
+        clienteId: cliente.id,
+        nfseXml: n.xml ? `${n.chaveAcesso}-nfse.xml` : null,
+        danfsePdf: n.pdf ? `${n.chaveAcesso}-danfse.pdf` : null,
+        vencimento: calcularVencimento(n.dataEmissao, cliente, config),
+        situacao: n.cancelada ? 'cancelada' : n.substituida ? 'substituida' : antiga ? 'pago' : 'aguardando',
+        dataPagamento: null,
+        baixa: antiga ? { tipo: 'pago', data: null, origem: 'importacao', em: new Date().toISOString() } : null,
+        dataEnvio: n.dataEmissao,
+        observacoes: antiga ? 'Importada como paga (histórico anterior ao sistema).' : '',
       });
-      resumo.notasExistentes++;
-      continue;
-    }
-    const antiga = limitePago && n.dataEmissao <= limitePago;
-    novasNotas.push({
-      id: crypto.randomUUID(),
-      criadaEm: new Date().toISOString(),
-      origem: 'importacao',
-      status: 'autorizada',
-      ambiente: n.ambiente,
-      serie: n.serie,
-      nDPS: n.nDPS,
-      chaveAcesso: n.chaveAcesso,
-      numero: n.numero,
-      dataEmissao: n.dataEmissao,
-      competencia: n.competencia,
-      valor: n.valor,
-      valorLiquido: n.valorLiquido ?? n.valor,
-      valorIss: n.valorIss,
-      issRetido: n.issRetido,
-      descricao: n.descricao,
-      tomador: { documento: cliente.documento, nome: cliente.nome, email: cliente.email ?? '' },
-      clienteId: cliente.id,
-      nfseXml: n.xml ? `${n.chaveAcesso}-nfse.xml` : null,
-      danfsePdf: n.pdf ? `${n.chaveAcesso}-danfse.pdf` : null,
-      vencimento: calcularVencimento(n.dataEmissao, cliente, config),
-      situacao: n.cancelada ? 'cancelada' : n.substituida ? 'substituida' : antiga ? 'pago' : 'aguardando',
-      dataPagamento: null,
-      baixa: antiga ? { tipo: 'pago', data: null, origem: 'importacao', em: new Date().toISOString() } : null,
-      dataEnvio: n.dataEmissao,
-      observacoes: antiga ? 'Importada como paga (histórico anterior ao sistema).' : '',
-    });
-    resumo.notasNovas++;
+      resumo.notasNovas++;
   }
   if (novasNotas.length) store.notas.salvarVarios(novasNotas);
   if (novasRecebidas.length) store.recebidas.salvarVarios(novasRecebidas);

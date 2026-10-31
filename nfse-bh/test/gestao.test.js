@@ -471,3 +471,25 @@ test('extrato: débito com nome do fornecedor dá baixa na nota recebida', () =>
   assert.deepEqual([paga.situacao, paga.dataPagamento, paga.valorPago], ['pago', '2026-10-20', '950.00']);
   assert.equal(store.lancamentos.listar().length, 1); // a tarifa não é guardada
 });
+
+test('importação não para por uma nota fora do padrão; nota sem tomador entra sem cliente', () => {
+  const store = novoStore();
+  const semToma = nfseXml({ numero: 70, data: '2026-10-05', tomador: ACME, valor: '500', descricao: 'Palestra', chave: chave(70) }).replace(/<toma>[\s\S]*?<\/toma>/, '');
+  const boa = nfseXml({ numero: 71, data: '2026-10-06', tomador: ACME, valor: '600', descricao: 'Mentoria', chave: chave(71) });
+  const quebrada = boa.replace(chave(71), chave(72)).replace('<nNFSe>71</nNFSe>', '<nNFSe>72</nNFSe>').replace(/<vServ>[^<]*<\/vServ>/, '<vServ>abc</vServ>');
+  // força uma exceção no processamento de uma nota: cliente com documento que lança ao salvar
+  const salvar = store.clientes.salvar;
+  store.clientes.salvar = (c) => {
+    if (c.documento === ACME.documento && c.descricaoPadrao?.includes('Palestra quebrada')) throw new Error('falha simulada');
+    return salvar(c);
+  };
+  const ruim = boa.replace(chave(71), chave(73)).replace('<nNFSe>71</nNFSe>', '<nNFSe>73</nNFSe>').replace(/Mentoria/g, 'Palestra quebrada');
+  const r = importarDocumentos({ store, config: config(), documentos: [semToma, boa, quebrada, ruim].map((xml, i) => ({ nome: `n${i}`, xml })) });
+  assert.equal(r.erros.length, 2);
+  assert.ok(r.erros.some((e) => /valor do serviço ilegível/.test(e)));
+  assert.ok(r.erros.some((e) => /NFS-e 73 .*falha simulada/.test(e)));
+  assert.equal(r.notasNovas, 2); // a sem tomador e a boa
+  const sem = store.notas.porChave(chave(70));
+  assert.deepEqual([sem.clienteId, sem.tomador.nome], [null, 'Tomador não identificado']);
+  assert.equal(store.clientes.listar().length, 1);
+});

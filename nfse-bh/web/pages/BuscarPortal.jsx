@@ -56,6 +56,13 @@ export default function BuscarPortal({ status, recarregar, compacto }) {
           {r.foraDoPeriodo ? ` · ${r.foraDoPeriodo} de outros anos ignorada(s)` : ''}
         </Msg>
       )}
+      {r?.erros?.length > 0 && (
+        <Msg tipo="alerta">
+          {r.erros.length} documento(s) não puderam ser importados (os demais entraram normalmente):
+          <ul className="lista-erros">{r.erros.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}</ul>
+          {r.erros.length > 10 && `… e mais ${r.erros.length - 10}.`} O XML deles fica em data\xml (arquivos erro-*.xml).
+        </Msg>
+      )}
       {status?.ultimoNsuAdn ? <p className="vazio">Última leitura até o documento NSU {status.ultimoNsuAdn}.</p> : null}
     </div>
   );
